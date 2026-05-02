@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Pacman 3D – Grafika Komputerowa</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body { background: #000; overflow: hidden; font-family: 'VT323', monospace; }
+
+        canvas { display: block; }
+
+        /* Efekt scanlines CRT */
+        body::after {
+            content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 100;
+            background: repeating-linear-gradient(
+                0deg, transparent, transparent 3px,
+                rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 4px
+            );
+        }
+
+        /* HUD góra */
+        #hud {
+            position: absolute; top: 14px; left: 0; right: 0;
+            display: flex; justify-content: space-between;
+            padding: 0 28px; pointer-events: none;
+            color: #ffff00; font-size: 26px;
+            text-shadow: 0 0 8px #ff0, 0 0 22px #ff0;
+        }
+
+        #score-box, #lives-box, #timer-box {
+            background: rgba(0,0,30,0.75);
+            border: 2px solid #ffff00;
+            padding: 4px 16px;
+            box-shadow: 0 0 12px #ff08;
+        }
+
+        /* Liczniki respawnu duchów – lewa strona */
+        #ghost-timers {
+            position: absolute; top: 80px; left: 20px;
+            display: flex; flex-direction: column; gap: 8px;
+            pointer-events: none; font-size: 22px;
+        }
+
+        .g-timer {
+            display: flex; align-items: center; gap: 10px;
+            padding: 3px 12px;
+            background: rgba(0,0,20,0.7);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 3px;
+            opacity: 0;  /* ukryte gdy duchy żyją */
+            transition: opacity 0.2s;
+        }
+
+        .g-timer.active { opacity: 1; }
+
+        .g-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+        .g-name { color: #aaa; min-width: 60px; }
+        .g-count { color: #fff; text-shadow: 0 0 6px #fff; min-width: 28px; text-align: right; }
+
+        /* Nakładka (start / pauza / game over) */
+        #overlay {
+            position: absolute; inset: 0;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            background: rgba(0,0,10,0.82);
+        }
+
+        #overlay h1 {
+            font-size: 56px; color: #ffff00;
+            text-shadow: 0 0 14px #ff0, 0 0 50px #ff0;
+            margin-bottom: 20px; letter-spacing: 6px;
+            animation: blink 1.2s step-end infinite;
+        }
+
+        #overlay h1.no-blink { animation: none; }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0; }
+        }
+
+        #overlay .subtitle {
+            font-size: 24px; color: #fff;
+            margin: 6px 0; text-shadow: 0 0 6px #88f;
+        }
+
+        #overlay .hint {
+            font-size: 18px; color: #777; margin: 3px 0;
+        }
+
+        /* Przyciski wyboru trudności */
+        #diff-select {
+            display: flex; gap: 18px; margin-top: 30px;
+        }
+
+        .diff-btn {
+            padding: 10px 22px;
+            font-size: 26px; font-family: 'VT323', monospace;
+            background: #000; cursor: pointer;
+            letter-spacing: 2px;
+            border: 3px solid; transition: all 0.1s;
+        }
+
+        .diff-btn[data-diff="easy"] {
+            color: #00ff88; border-color: #00ff88;
+            text-shadow: 0 0 8px #0f8;
+            box-shadow: 0 0 14px #0f84;
+        }
+        .diff-btn[data-diff="easy"]:hover {
+            background: #00ff88; color: #000; text-shadow: none;
+            box-shadow: 0 0 28px #0f8;
+        }
+        .diff-btn[data-diff="normal"] {
+            color: #ffff00; border-color: #ffff00;
+            text-shadow: 0 0 8px #ff0;
+            box-shadow: 0 0 14px #ff04;
+        }
+        .diff-btn[data-diff="normal"]:hover {
+            background: #ffff00; color: #000; text-shadow: none;
+            box-shadow: 0 0 28px #ff0;
+        }
+        .diff-btn[data-diff="hard"] {
+            color: #ff4444; border-color: #ff4444;
+            text-shadow: 0 0 8px #f44;
+            box-shadow: 0 0 14px #f444;
+        }
+        .diff-btn[data-diff="hard"]:hover {
+            background: #ff4444; color: #000; text-shadow: none;
+            box-shadow: 0 0 28px #f44;
+        }
+
+        /* Przycisk wznowienia (tylko przy pauzie) */
+        #resumeBtn {
+            margin-top: 28px; padding: 10px 28px;
+            font-size: 28px; font-family: 'VT323', monospace;
+            background: #000; color: #ffff00;
+            border: 3px solid #ffff00; cursor: pointer;
+            letter-spacing: 3px;
+            text-shadow: 0 0 8px #ff0;
+            box-shadow: 0 0 18px #ff06;
+            transition: all 0.1s;
+        }
+        #resumeBtn:hover {
+            background: #ffff00; color: #000;
+            text-shadow: none; box-shadow: 0 0 30px #ff0;
+        }
+
+        .hidden { display: none !important; }
+
+        /* Wpisywanie nicku */
+        #name-entry {
+            display: flex; flex-direction: column; align-items: center;
+            gap: 12px; margin-top: 22px;
+        }
+        #name-input {
+            font-family: 'VT323', monospace; font-size: 32px;
+            background: #000; color: #ffff00; border: 3px solid #ffff00;
+            outline: none; padding: 6px 18px; width: 230px;
+            text-align: center; letter-spacing: 6px; text-transform: uppercase;
+            text-shadow: 0 0 8px #ff0; caret-color: #ffff00;
+            box-shadow: 0 0 12px #ff04;
+        }
+        #name-confirm {
+            padding: 8px 28px; font-size: 26px; font-family: 'VT323', monospace;
+            background: #000; color: #ffff00; border: 3px solid #ffff00;
+            cursor: pointer; letter-spacing: 3px;
+            text-shadow: 0 0 8px #ff0; box-shadow: 0 0 14px #ff06; transition: all 0.1s;
+        }
+        #name-confirm:hover { background: #ffff00; color: #000; text-shadow: none; }
+
+        /* Tabela high scores */
+        #highscore-table { margin-top: 14px; }
+        .hs-title {
+            font-size: 18px; color: #ff8800; letter-spacing: 4px;
+            text-shadow: 0 0 8px #f80; text-align: center; margin-bottom: 5px;
+        }
+        .hs-row {
+            display: flex; gap: 8px; font-size: 20px;
+            padding: 2px 8px; min-width: 300px;
+        }
+        .hs-rank  { color: #555; width: 24px; text-align: right; }
+        .hs-name  { color: #ffff00; width: 110px; text-shadow: 0 0 4px #ff04; }
+        .hs-score { color: #fff; width: 80px; text-align: right; }
+        .hs-time  { color: #888; width: 52px; text-align: right; }
+        .hs-new .hs-rank, .hs-new .hs-name,
+        .hs-new .hs-score, .hs-new .hs-time {
+            color: #00ff88 !important; text-shadow: 0 0 6px #0f8 !important;
+        }
+    </style>
+</head>
+<body>
+
+<div id="hud" class="hidden">
+    <div id="score-box">WYNIK &nbsp; <span id="score">0</span></div>
+    <div id="timer-box">CZAS &nbsp; <span id="timer">0:00</span></div>
+    <div id="lives-box">ŻYCIA &nbsp; <span id="lives">3</span></div>
+</div>
+
+<!-- Timery respawnu duchów -->
+<div id="ghost-timers" class="hidden">
+    <div class="g-timer" id="gt-0">
+        <span class="g-dot" style="background:#ff0000"></span>
+        <span class="g-name">BLINKY</span>
+        <span class="g-count" id="gc-0">5</span>
+    </div>
+    <div class="g-timer" id="gt-1">
+        <span class="g-dot" style="background:#ffb8ff"></span>
+        <span class="g-name">PINKY</span>
+        <span class="g-count" id="gc-1">5</span>
+    </div>
+    <div class="g-timer" id="gt-2">
+        <span class="g-dot" style="background:#00ffff"></span>
+        <span class="g-name">INKY</span>
+        <span class="g-count" id="gc-2">5</span>
+    </div>
+    <div class="g-timer" id="gt-3">
+        <span class="g-dot" style="background:#ffb852"></span>
+        <span class="g-name">CLYDE</span>
+        <span class="g-count" id="gc-3">5</span>
+    </div>
+</div>
+
+<div id="overlay">
+    <h1 id="overlayTitle">PACMAN 3D</h1>
+    <p class="subtitle" id="overlayMsg">ZJEDZ WSZYSTKIE KULKI</p>
+    <p class="hint" id="hintControls">STRZAŁKI / WASD – RUCH &nbsp;|&nbsp; P – PAUZA</p>
+    <p class="hint" id="hintPellet">BIAŁA KULKA = DUCHY DO ZJEDZENIA PRZEZ 8 SEK</p>
+
+    <!-- Wybór poziomu trudności (ekran startowy / po grze) -->
+    <div id="diff-select">
+        <button class="diff-btn" data-diff="easy">ŁATWY</button>
+        <button class="diff-btn" data-diff="normal">NORMALNY</button>
+        <button class="diff-btn" data-diff="hard">TRUDNY</button>
+    </div>
+
+    <!-- Przycisk wznowienia widoczny tylko przy pauzie -->
+    <button id="resumeBtn" class="hidden">WZNÓW</button>
+
+    <!-- Wpisywanie nicku (po zakończeniu gry) -->
+    <div id="name-entry" class="hidden">
+        <input id="name-input" type="text" maxlength="8" placeholder="NICK"
+               spellcheck="false" autocomplete="off">
+        <button id="name-confirm">ZAPISZ</button>
+    </div>
+
+    <!-- Tabela high scores -->
+    <div id="highscore-table" class="hidden">
+        <p class="hs-title">★ HIGH SCORES ★</p>
+        <div id="hs-list"></div>
+    </div>
+</div>
+
+<canvas></canvas>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+}
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
