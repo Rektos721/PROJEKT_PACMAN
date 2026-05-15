@@ -17,12 +17,20 @@ import { initAudio, startMusic, stopMusic, pauseMusic, resumeMusic,
 // 1. RENDERER
 // ============================================================
 
-const canvas   = document.querySelector('canvas');
+const canvas          = document.querySelector('canvas');
+const screenContainer = document.getElementById('screen-container');
+
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+
+function getScreenSize() {
+    return { w: screenContainer.clientWidth, h: screenContainer.clientHeight };
+}
+
+const _s0 = getScreenSize();
+renderer.setSize(_s0.w, _s0.h, false);
 
 // ============================================================
 // 2. SCENA
@@ -36,7 +44,7 @@ scene.fog = new THREE.FogExp2(0x000008, 0.010);
 // 3. KAMERA
 // ============================================================
 
-const camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 220);
+const camera = new THREE.PerspectiveCamera(58, _s0.w / _s0.h, 0.1, 220);
 camera.position.set(0, 44, 20);
 camera.lookAt(0, 0, 1);
 
@@ -131,6 +139,7 @@ const diffSelect     = document.getElementById('diff-select');
 const resumeBtn      = document.getElementById('resumeBtn');
 const hintControls   = document.getElementById('hintControls');
 const hintPellet     = document.getElementById('hintPellet');
+const coinSlotEl = document.getElementById('coinSlot');
 
 const ghostTimerRows   = [0, 1, 2, 3].map(i => document.getElementById(`gt-${i}`));
 const ghostTimerCounts = [0, 1, 2, 3].map(i => document.getElementById(`gc-${i}`));
@@ -213,6 +222,35 @@ nameInput.addEventListener('keydown', e => {
 // 7. ZARZĄDZANIE EKRANAMI
 // ============================================================
 
+// ── Animacja monety przy wyborze trudności ────────────────────────────────────────
+function playCoinThenStart(diffKey) {
+    document.querySelectorAll('.diff-btn').forEach(b => b.style.pointerEvents = 'none');
+
+    const slotRect = coinSlotEl.getBoundingClientRect();
+
+    // viewport-relative — fixed, więc overflow:hidden nie ma znaczenia
+    const cx = slotRect.left + slotRect.width  / 2;
+    const sy = slotRect.top  - 72;
+    const ey = slotRect.top  + slotRect.height / 2;
+
+    const coin = document.createElement('div');
+    coin.className        = 'coin-anim';
+    coin.textContent      = '¢';
+    coin.style.position   = 'fixed';
+    coin.style.left       = cx + 'px';
+    coin.style.top        = sy + 'px';
+    coin.style.setProperty('--fall', (ey - sy) + 'px');
+    document.body.appendChild(coin);
+
+    setTimeout(() => {
+        coin.remove();
+        coinSlotEl.classList.add('absorb');
+        setTimeout(() => coinSlotEl.classList.remove('absorb'), 420);
+        document.querySelectorAll('.diff-btn').forEach(b => b.style.pointerEvents = '');
+        startGame(diffKey);
+    }, 720);
+}
+
 /** Ekran wyboru trudności (start / po grze) */
 function showDiffSelect(title, msg, blink = true) {
     stopMusic();
@@ -221,16 +259,17 @@ function showDiffSelect(title, msg, blink = true) {
     overlayTitle.className   = blink ? '' : 'no-blink';
     overlayMsg.textContent   = msg;
     diffSelect.classList.remove('hidden');
-    resumeBtn.classList.add('hidden');
-    nameEntry.classList.add('hidden');
     hintControls.classList.remove('hidden');
     hintPellet.classList.remove('hidden');
+    resumeBtn.classList.add('hidden');
+    nameEntry.classList.add('hidden');
     hud.classList.add('hidden');
     ghostTimers.classList.add('hidden');
     overlay.classList.remove('hidden');
     renderHS();
     hsTable.classList.remove('hidden');
 }
+
 
 /** Pauza / wznowienie */
 function togglePause() {
@@ -464,8 +503,10 @@ animate();
 // 11. RESPONSYWNOŚĆ
 // ============================================================
 
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
+new ResizeObserver(() => {
+    const { w, h } = getScreenSize();
+    if (!w || !h) return;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
+    renderer.setSize(w, h, false);
+}).observe(screenContainer);

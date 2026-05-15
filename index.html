@@ -6,254 +6,630 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { margin:0; padding:0; box-sizing:border-box; }
 
-        body { background: #000; overflow: hidden; font-family: 'VT323', monospace; }
+        body {
+            width:100vw; height:100vh; overflow:hidden;
+            font-family:'VT323',monospace;
+            display:flex; align-items:center; justify-content:center;
+            background:#03030a;
+        }
 
-        canvas { display: block; }
+        /* ══ TŁO SALONU GER ══════════════════════════════════
+           Sufit: neonowe belki + ambient
+           Podłoga: siatka w perspektywie (retro arcade classic)
+        ══════════════════════════════════════════════════════ */
 
-        /* Efekt scanlines CRT */
-        body::after {
-            content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 100;
-            background: repeating-linear-gradient(
-                0deg, transparent, transparent 3px,
-                rgba(0,0,0,0.07) 3px, rgba(0,0,0,0.07) 4px
+        /* sufit — neonowe belki świetlne */
+        .room-ceiling {
+            position:fixed; top:0; left:0; right:0; height:4px; z-index:0;
+            background:linear-gradient(90deg,
+                transparent 0%,
+                rgba(255,0,140,.9) 12%, rgba(255,0,140,.9) 16%, transparent 20%,
+                transparent 32%,
+                rgba(0,180,255,.9) 44%, rgba(0,180,255,.9) 48%, transparent 52%,
+                transparent 64%,
+                rgba(255,210,0,.9)  76%, rgba(255,210,0,.9)  80%, transparent 84%,
+                transparent 92%,
+                rgba(140,0,255,.7)  95%, rgba(140,0,255,.7)  98%, transparent 100%
             );
+            box-shadow:
+                0 0 18px rgba(255,0,140,.5),
+                0 0 50px rgba(255,0,140,.2),
+                0 0 18px rgba(0,180,255,.4);
         }
 
-        /* HUD góra */
+        /* ambient z sufitu */
+        .room-ambient {
+            position:fixed; inset:0; z-index:0; pointer-events:none;
+            background:
+                radial-gradient(ellipse 160% 35% at 50% 0%,
+                    rgba(80,0,180,.28) 0%, transparent 55%),
+                radial-gradient(ellipse 40% 80% at 0%  50%,
+                    rgba(0,60,200,.10) 0%, transparent 55%),
+                radial-gradient(ellipse 40% 80% at 100% 50%,
+                    rgba(180,0,80,.08) 0%, transparent 55%);
+        }
+
+        /* perspektywiczna siatka podłogi */
+        .room-floor {
+            position:fixed; bottom:0;
+            left:-50vw; right:-50vw;
+            height:55vh;
+            z-index:0; pointer-events:none;
+
+            background-image:
+                linear-gradient(rgba(110,0,255,.18) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(110,0,255,.18) 1px, transparent 1px);
+            background-size:80px 80px;
+
+            transform:perspective(700px) rotateX(52deg);
+            transform-origin:top center;
+
+            /* zanik u góry siatki */
+            -webkit-mask-image:linear-gradient(to bottom,
+                transparent 0%, rgba(0,0,0,.4) 12%, black 45%);
+            mask-image:linear-gradient(to bottom,
+                transparent 0%, rgba(0,0,0,.4) 12%, black 45%);
+        }
+
+        /* horyzont podłogi — świecąca linia */
+        .room-floor::after {
+            content:'';
+            position:absolute; top:0; left:0; right:0; height:2px;
+            background:linear-gradient(90deg,
+                transparent 5%, rgba(120,0,255,.6) 30%,
+                rgba(180,0,255,.8) 50%,
+                rgba(120,0,255,.6) 70%, transparent 95%);
+            box-shadow:0 0 20px rgba(150,0,255,.6), 0 0 60px rgba(100,0,200,.3);
+        }
+
+        /* napisy na ścianie — ledwo widoczne */
+        .wall-text {
+            position:fixed; z-index:0;
+            font-size:22px; letter-spacing:6px;
+            pointer-events:none;
+        }
+        .wall-text.left  { left:2vw;  top:38%; color:rgba(0,180,255,.08);  transform:rotate(-90deg) translateX(-50%); }
+        .wall-text.right { right:2vw; top:38%; color:rgba(255,0,140,.08);  transform:rotate(90deg)  translateX(50%); }
+
+        /* ══ AUTOMAT ═════════════════════════════════════════ */
+
+        .arcade-machine {
+            position:relative; z-index:1;
+            display:flex; flex-direction:column; align-items:stretch;
+
+            width:  min(660px, 95vw);
+            height: min(960px, 96vh);
+
+            background:#080918;
+            border-radius:28px 28px 4px 4px;
+            border:3px solid #14163a;
+
+            box-shadow:
+                -7px 0 0 #04040e,
+                 7px 0 0 #04040e,
+                0 -22px 80px  rgba(255,210,0,.20),
+                0   0px 100px rgba(40,0,140,.45),
+                0  35px 100px rgba(0,0,0,.95),
+                inset 0 0 0 2px rgba(255,255,255,.025);
+
+            overflow:hidden;
+        }
+
+        /* ── MARQUEE ──────────────────────────────────────── */
+
+        .arc-marquee {
+            flex-shrink:0; height:82px;
+            position:relative; overflow:hidden;
+            background:
+                radial-gradient(ellipse 90% 160% at 50% 80%,rgba(255,200,0,.16) 0%,transparent 60%),
+                linear-gradient(180deg,#0b0020 0%,#12002e 60%,#0c001e 100%);
+            border-bottom:4px solid #09001a;
+            display:flex; flex-direction:column;
+            align-items:center; justify-content:center; gap:0;
+        }
+        .arc-marquee::before {
+            content:''; position:absolute; inset:0;
+            background:repeating-linear-gradient(
+                90deg,transparent 0,transparent 20px,
+                rgba(180,100,255,.04) 20px,rgba(180,100,255,.04) 22px);
+            pointer-events:none;
+        }
+
+        .mq-lights { display:flex; gap:9px; z-index:1; }
+        .mq-lights.top    { position:absolute; top:7px; }
+        .mq-lights.bottom { position:absolute; bottom:7px; }
+
+        .dot { width:7px; height:7px; border-radius:50%; }
+        .dot.y{background:#ffe600;box-shadow:0 0 6px #ffe600,0 0 14px #ffaa00}
+        .dot.o{background:#ff8800;box-shadow:0 0 6px #ff8800,0 0 14px #ff5500}
+        .dot.r{background:#ff2244;box-shadow:0 0 6px #ff2244,0 0 12px #aa0020}
+        .dot.c{background:#00eeff;box-shadow:0 0 6px #00eeff,0 0 12px #0088bb}
+        .dot.a{animation:blinkA 1.3s ease-in-out infinite}
+        .dot.b{animation:blinkB 1.3s ease-in-out infinite}
+
+        @keyframes blinkA{0%,48%,100%{opacity:1}50%,96%{opacity:.12}}
+        @keyframes blinkB{0%,48%,100%{opacity:.12}50%,96%{opacity:1}}
+
+        .mq-title {
+            z-index:1; font-size:58px; letter-spacing:14px; line-height:1;
+            color:#ffe600;
+            text-shadow:
+                0 0 4px #fff,0 0 12px #ffe600,
+                0 0 28px #ffe600,0 0 56px #ffaa00,0 0 100px #ff6600;
+        }
+        .mq-sub {
+            z-index:1; font-size:14px; letter-spacing:9px;
+            color:#cc77ff;
+            text-shadow:0 0 8px #aa44ff,0 0 20px #6600cc;
+        }
+
+        /* ── CIAŁO ────────────────────────────────────────── */
+
+        .arc-body {
+            flex:1; min-height:0;
+            display:flex;
+            margin:0 8px; /* talia */
+        }
+
+        .arc-side {
+            flex-shrink:0; width:24px;
+            display:flex; flex-direction:column;
+            align-items:center; justify-content:space-evenly;
+            padding:16px 0;
+            background:linear-gradient(90deg,#060610 0%,#0b0b1c 50%,#080810 100%);
+            border-left: 1px solid rgba(255,255,255,.03);
+            border-right:1px solid rgba(255,255,255,.03);
+        }
+        .arc-side.r {
+            background:linear-gradient(90deg,#080810 0%,#0b0b1c 50%,#060610 100%);
+        }
+        .vent{width:12px;height:3px;border-radius:2px;background:#10101e;box-shadow:inset 0 1px 2px rgba(0,0,0,.9)}
+
+        .arc-screen-wrap {
+            flex:1; min-width:0;
+            display:flex; padding:10px 0;
+            background:#040410;
+            border-left: 2px solid #0e0e26;
+            border-right:2px solid #0e0e26;
+        }
+
+        .arc-bezel {
+            flex:1; margin:0 9px;
+            background:#020208;
+            border-radius:5px; padding:10px;
+            border:2px solid #0a0a1c;
+            box-shadow:
+                inset 0 0 28px rgba(0,0,0,.96),
+                inset 0 0  7px rgba(0,0,80,.4),
+                0 0 14px rgba(0,0,50,.25);
+        }
+
+        #screen-container {
+            position:relative; width:100%; height:100%;
+            border-radius:4px; overflow:hidden;
+            background:#000006;
+            box-shadow:
+                inset 0 0 50px rgba(0,10,120,.55),
+                inset 0 0  5px rgba(80,80,255,.2);
+            filter:contrast(1.06) saturate(1.1);
+        }
+
+        canvas {
+            display:block; position:absolute; inset:0;
+            width:100%; height:100%;
+        }
+
+        /* CRT */
+        .crt-overlay {
+            position:absolute; inset:0; z-index:50;
+            border-radius:4px; pointer-events:none;
+            background:repeating-linear-gradient(
+                0deg,transparent 0,transparent 3px,
+                rgba(0,0,12,.09) 3px,rgba(0,0,12,.09) 4px);
+        }
+        .crt-overlay::before {
+            content:''; position:absolute; inset:0; border-radius:4px;
+            background:radial-gradient(ellipse 90% 90% at 50% 50%,
+                transparent 38%,rgba(0,0,18,.52) 74%,rgba(0,0,28,.88) 100%);
+        }
+        .crt-overlay::after {
+            content:''; position:absolute; inset:0; border-radius:4px;
+            animation:crtFlicker 14s step-end infinite;
+            background:rgba(0,0,30,.02);
+        }
+        @keyframes crtFlicker{
+            0%,90%{opacity:1}91%{opacity:.83}91.5%{opacity:1}
+            93%{opacity:.91}93.4%{opacity:1}96%{opacity:.87}96.4%{opacity:1}
+        }
+
+        /* ── PANEL STEROWANIA ─────────────────────────────── */
+
+        .arc-panel-outer {
+            flex-shrink:0;
+            margin:0 -6px;
+            background:#0c0c20;
+            border-top:3px solid #171738;
+            border-left: 3px solid #171738;
+            border-right:3px solid #171738;
+            border-radius:0 0 14px 14px;
+            padding:2px 2px 0;
+            transform:perspective(500px) rotateX(-7deg);
+            transform-origin:top center;
+            box-shadow:0 10px 24px rgba(0,0,0,.8),0 2px 6px rgba(0,0,0,.6);
+        }
+
+        .arc-panel-surface {
+            background:linear-gradient(170deg,#0f0f2e 0%,#0b0b22 60%,#07071a 100%);
+            border-radius:0 0 12px 12px;
+            padding:10px 22px 13px;
+            display:flex; align-items:center; justify-content:space-between;
+        }
+
+        .joystick-base {
+            width:56px; height:56px; border-radius:50%;
+            background:radial-gradient(circle at 38% 28%,#1c1c38,#09091a);
+            border:2px solid #1a1a36;
+            box-shadow:0 4px 14px rgba(0,0,0,.9),inset 0 1px 2px rgba(255,255,255,.04);
+            display:flex; align-items:center; justify-content:center;
+        }
+        .joystick-shaft {
+            width:17px; height:34px;
+            background:linear-gradient(90deg,#262646 0%,#363660 40%,#262646 100%);
+            border-radius:4px 4px 5px 5px; border:1px solid #3e3e5e;
+            box-shadow:0 3px 8px rgba(0,0,0,.9);
+            display:flex; align-items:flex-start; justify-content:center; padding-top:2px;
+        }
+        .joystick-ball {
+            width:15px; height:15px; border-radius:50%;
+            background:radial-gradient(circle at 35% 30%,#5050a0,#161630);
+            border:1px solid #3e3e6e;
+        }
+
+        .panel-btns { display:flex; flex-direction:column; gap:8px; align-items:center; }
+        .start-btn {
+            font-family:'VT323',monospace; font-size:13px; letter-spacing:1px;
+            width:50px; height:21px; border-radius:4px;
+            border:none; cursor:default; pointer-events:none;
+            display:flex; align-items:center; justify-content:center;
+        }
+        .start-btn.p1 {
+            background:radial-gradient(circle at 38% 30%,#ffe600,#aa9000);
+            color:#443200;
+            box-shadow:0 4px 0 #776600,0 6px 10px rgba(0,0,0,.9);
+        }
+        .start-btn.p2 {
+            background:radial-gradient(circle at 38% 30%,#ff4466,#aa1122);
+            color:#330010;
+            box-shadow:0 4px 0 #770018,0 6px 10px rgba(0,0,0,.9);
+        }
+
+        .panel-speaker {
+            display:grid; grid-template-columns:repeat(4,6px);
+            grid-template-rows:repeat(5,6px); gap:5px;
+        }
+        .sp-dot { width:6px; height:6px; border-radius:50%; background:#0c0c1e; box-shadow:inset 0 1px 2px rgba(0,0,0,.9); }
+
+        /* ── DRZWICZKI MONETARNE ──────────────────────────── */
+
+        .arc-coin-door {
+            flex-shrink:0; height:44px;
+            background:linear-gradient(180deg,#060616 0%,#04040e 100%);
+            border-top:2px solid #0e0e26;
+            display:flex; align-items:center; justify-content:center; gap:36px;
+        }
+
+        .coin-slot-unit {
+            display:flex; flex-direction:column; align-items:center; gap:3px;
+        }
+        .coin-door-label {
+            font-size:11px; letter-spacing:2px; color:#1a1a36;
+        }
+        #coinSlot {
+            width:44px; height:5px; border-radius:3px;
+            background:#030310; border:1px solid #14143a;
+            box-shadow:inset 0 2px 5px rgba(0,0,0,1);
+            transition:background .06s,box-shadow .06s;
+        }
+        #coinSlot.absorb {
+            background:#ffe600;
+            box-shadow:0 0 14px #ffcc00,0 0 28px #ff8800;
+        }
+
+        .service-panel {
+            width:22px; height:30px; background:#040410;
+            border:1px solid #101026; border-radius:2px;
+            box-shadow:inset 0 1px 3px rgba(0,0,0,.8);
+            display:flex; align-items:center; justify-content:center;
+        }
+        .service-led { width:5px; height:5px; border-radius:50%; background:#001400; }
+
+        /* ── NOGI ─────────────────────────────────────────── */
+
+        .arc-base {
+            flex-shrink:0;
+            display:flex; flex-direction:column; align-items:center;
+        }
+        .base-top { width:100%; height:16px; background:linear-gradient(180deg,#050512 0%,#030310 100%); border-top:2px solid #0c0c20; }
+        .base-legs { display:flex; justify-content:center; gap:90px; width:100%; }
+        .leg {
+            width:26px; height:28px;
+            background:linear-gradient(180deg,#050512 0%,#02020e 100%);
+            border-left:2px solid #0b0b1e; border-right:2px solid #0b0b1e;
+            border-bottom:3px solid #08081a; border-radius:0 0 4px 4px;
+        }
+
+        /* ── MONETA ANIMOWANA ─────────────────────────────── */
+
+        .coin-anim {
+            position:absolute; z-index:999; pointer-events:none;
+            width:26px; height:26px; border-radius:50%;
+            transform:translateX(-50%);
+
+            background:radial-gradient(circle at 35% 28%,
+                #fffaaa 0%,#ffe600 22%,#cc9900 62%,#886600 100%);
+            border:2px solid #ddaa00;
+            box-shadow:0 0 14px #ffcc00,0 0 4px #fff,inset 0 0 8px rgba(0,0,0,.2);
+
+            font-family:'VT323',monospace; font-size:15px; color:#8a5800;
+            display:flex; align-items:center; justify-content:center;
+
+            animation:coinToSlot .7s cubic-bezier(.42,0,1,1) forwards;
+        }
+
+        @keyframes coinToSlot {
+            0%  { transform:translateX(-50%) rotateY(0deg)   scale(1);       opacity:1; }
+            55% { transform:translateX(-50%) translateY(var(--fall)) rotateY(400deg) scale(1);        opacity:1; }
+            70% { transform:translateX(-50%) translateY(var(--fall)) rotateY(400deg) scale(1.2,.22);  opacity:1; }
+            88% { transform:translateX(-50%) translateY(var(--fall)) rotateY(400deg) scale(.9,.06);   opacity:.7; }
+            100%{ transform:translateX(-50%) translateY(var(--fall)) rotateY(400deg) scale(0,0);      opacity:0; }
+        }
+
+        /* ══ GAME UI (wewnątrz #screen-container) ═══════════ */
+
         #hud {
-            position: absolute; top: 14px; left: 0; right: 0;
-            display: flex; justify-content: space-between;
-            padding: 0 28px; pointer-events: none;
-            color: #ffff00; font-size: 26px;
-            text-shadow: 0 0 8px #ff0, 0 0 22px #ff0;
+            position:absolute; top:10px; left:0; right:0;
+            display:flex; justify-content:space-between;
+            padding:0 12px; pointer-events:none;
+            color:#ffff00; font-size:19px;
+            text-shadow:0 0 8px #ff0,0 0 20px #ff0;
+            z-index:10;
+        }
+        #score-box,#lives-box,#timer-box {
+            background:rgba(0,0,30,.75);
+            border:2px solid #ffff00; padding:1px 9px;
+            box-shadow:0 0 10px #ff08;
         }
 
-        #score-box, #lives-box, #timer-box {
-            background: rgba(0,0,30,0.75);
-            border: 2px solid #ffff00;
-            padding: 4px 16px;
-            box-shadow: 0 0 12px #ff08;
-        }
-
-        /* Liczniki respawnu duchów – lewa strona */
         #ghost-timers {
-            position: absolute; top: 80px; left: 20px;
-            display: flex; flex-direction: column; gap: 8px;
-            pointer-events: none; font-size: 22px;
+            position:absolute; top:48px; left:8px;
+            display:flex; flex-direction:column; gap:5px;
+            pointer-events:none; font-size:16px; z-index:10;
         }
-
         .g-timer {
-            display: flex; align-items: center; gap: 10px;
-            padding: 3px 12px;
-            background: rgba(0,0,20,0.7);
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 3px;
-            opacity: 0;  /* ukryte gdy duchy żyją */
-            transition: opacity 0.2s;
+            display:flex; align-items:center; gap:7px; padding:1px 9px;
+            background:rgba(0,0,20,.7);
+            border:1px solid rgba(255,255,255,.12); border-radius:3px;
+            opacity:0; transition:opacity .2s;
         }
+        .g-timer.active{opacity:1}
+        .g-dot {width:11px;height:11px;border-radius:50%;display:inline-block}
+        .g-name{color:#aaa;min-width:46px}
+        .g-count{color:#fff;text-shadow:0 0 6px #fff;min-width:20px;text-align:right}
 
-        .g-timer.active { opacity: 1; }
-
-        .g-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
-        .g-name { color: #aaa; min-width: 60px; }
-        .g-count { color: #fff; text-shadow: 0 0 6px #fff; min-width: 28px; text-align: right; }
-
-        /* Nakładka (start / pauza / game over) */
         #overlay {
-            position: absolute; inset: 0;
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            background: rgba(0,0,10,0.82);
+            position:absolute; inset:0;
+            display:flex; flex-direction:column;
+            align-items:center; justify-content:center;
+            background:rgba(0,0,10,.84); z-index:20;
         }
 
         #overlay h1 {
-            font-size: 56px; color: #ffff00;
-            text-shadow: 0 0 14px #ff0, 0 0 50px #ff0;
-            margin-bottom: 20px; letter-spacing: 6px;
-            animation: blink 1.2s step-end infinite;
+            font-size:44px; color:#ffff00;
+            text-shadow:0 0 12px #ff0,0 0 38px #ff0;
+            margin-bottom:8px; letter-spacing:6px;
+            animation:blink 1.2s step-end infinite;
         }
+        #overlay h1.no-blink{animation:none}
 
-        #overlay h1.no-blink { animation: none; }
+        @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50%       { opacity: 0; }
-        }
+        .subtitle{font-size:19px;color:#fff;margin:3px 0;text-shadow:0 0 6px #88f}
+        .hint    {font-size:13px;color:#666;margin:2px 0}
 
-        #overlay .subtitle {
-            font-size: 24px; color: #fff;
-            margin: 6px 0; text-shadow: 0 0 6px #88f;
-        }
+        #diff-select{display:flex;gap:12px;margin-top:22px}
 
-        #overlay .hint {
-            font-size: 18px; color: #777; margin: 3px 0;
+        .diff-btn{
+            padding:7px 14px;
+            font-size:21px;font-family:'VT323',monospace;
+            background:#000;cursor:pointer;letter-spacing:2px;
+            border:3px solid;transition:all .1s;
         }
+        .diff-btn[data-diff="easy"]  {color:#00ff88;border-color:#00ff88;text-shadow:0 0 8px #0f8;box-shadow:0 0 14px #0f84}
+        .diff-btn[data-diff="easy"]:hover  {background:#00ff88;color:#000;text-shadow:none;box-shadow:0 0 28px #0f8}
+        .diff-btn[data-diff="normal"]{color:#ffff00;border-color:#ffff00;text-shadow:0 0 8px #ff0;box-shadow:0 0 14px #ff04}
+        .diff-btn[data-diff="normal"]:hover{background:#ffff00;color:#000;text-shadow:none;box-shadow:0 0 28px #ff0}
+        .diff-btn[data-diff="hard"]  {color:#ff4444;border-color:#ff4444;text-shadow:0 0 8px #f44;box-shadow:0 0 14px #f444}
+        .diff-btn[data-diff="hard"]:hover  {background:#ff4444;color:#000;text-shadow:none;box-shadow:0 0 28px #f44}
 
-        /* Przyciski wyboru trudności */
-        #diff-select {
-            display: flex; gap: 18px; margin-top: 30px;
+        #resumeBtn{
+            margin-top:20px;padding:7px 20px;font-size:23px;
+            font-family:'VT323',monospace;background:#000;color:#ffff00;
+            border:3px solid #ffff00;cursor:pointer;letter-spacing:3px;
+            text-shadow:0 0 8px #ff0;box-shadow:0 0 16px #ff06;transition:all .1s;
         }
+        #resumeBtn:hover{background:#ffff00;color:#000;text-shadow:none;box-shadow:0 0 28px #ff0}
 
-        .diff-btn {
-            padding: 10px 22px;
-            font-size: 26px; font-family: 'VT323', monospace;
-            background: #000; cursor: pointer;
-            letter-spacing: 2px;
-            border: 3px solid; transition: all 0.1s;
-        }
+        .hidden{display:none!important}
 
-        .diff-btn[data-diff="easy"] {
-            color: #00ff88; border-color: #00ff88;
-            text-shadow: 0 0 8px #0f8;
-            box-shadow: 0 0 14px #0f84;
+        #name-entry{display:flex;flex-direction:column;align-items:center;gap:9px;margin-top:16px}
+        #name-input{
+            font-family:'VT323',monospace;font-size:27px;
+            background:#000;color:#ffff00;border:3px solid #ffff00;
+            outline:none;padding:4px 13px;width:196px;
+            text-align:center;letter-spacing:6px;text-transform:uppercase;
+            text-shadow:0 0 8px #ff0;caret-color:#ffff00;box-shadow:0 0 12px #ff04;
         }
-        .diff-btn[data-diff="easy"]:hover {
-            background: #00ff88; color: #000; text-shadow: none;
-            box-shadow: 0 0 28px #0f8;
+        #name-confirm{
+            padding:5px 20px;font-size:21px;font-family:'VT323',monospace;
+            background:#000;color:#ffff00;border:3px solid #ffff00;
+            cursor:pointer;letter-spacing:3px;
+            text-shadow:0 0 8px #ff0;box-shadow:0 0 14px #ff06;transition:all .1s;
         }
-        .diff-btn[data-diff="normal"] {
-            color: #ffff00; border-color: #ffff00;
-            text-shadow: 0 0 8px #ff0;
-            box-shadow: 0 0 14px #ff04;
-        }
-        .diff-btn[data-diff="normal"]:hover {
-            background: #ffff00; color: #000; text-shadow: none;
-            box-shadow: 0 0 28px #ff0;
-        }
-        .diff-btn[data-diff="hard"] {
-            color: #ff4444; border-color: #ff4444;
-            text-shadow: 0 0 8px #f44;
-            box-shadow: 0 0 14px #f444;
-        }
-        .diff-btn[data-diff="hard"]:hover {
-            background: #ff4444; color: #000; text-shadow: none;
-            box-shadow: 0 0 28px #f44;
-        }
+        #name-confirm:hover{background:#ffff00;color:#000;text-shadow:none}
 
-        /* Przycisk wznowienia (tylko przy pauzie) */
-        #resumeBtn {
-            margin-top: 28px; padding: 10px 28px;
-            font-size: 28px; font-family: 'VT323', monospace;
-            background: #000; color: #ffff00;
-            border: 3px solid #ffff00; cursor: pointer;
-            letter-spacing: 3px;
-            text-shadow: 0 0 8px #ff0;
-            box-shadow: 0 0 18px #ff06;
-            transition: all 0.1s;
-        }
-        #resumeBtn:hover {
-            background: #ffff00; color: #000;
-            text-shadow: none; box-shadow: 0 0 30px #ff0;
-        }
-
-        .hidden { display: none !important; }
-
-        /* Wpisywanie nicku */
-        #name-entry {
-            display: flex; flex-direction: column; align-items: center;
-            gap: 12px; margin-top: 22px;
-        }
-        #name-input {
-            font-family: 'VT323', monospace; font-size: 32px;
-            background: #000; color: #ffff00; border: 3px solid #ffff00;
-            outline: none; padding: 6px 18px; width: 230px;
-            text-align: center; letter-spacing: 6px; text-transform: uppercase;
-            text-shadow: 0 0 8px #ff0; caret-color: #ffff00;
-            box-shadow: 0 0 12px #ff04;
-        }
-        #name-confirm {
-            padding: 8px 28px; font-size: 26px; font-family: 'VT323', monospace;
-            background: #000; color: #ffff00; border: 3px solid #ffff00;
-            cursor: pointer; letter-spacing: 3px;
-            text-shadow: 0 0 8px #ff0; box-shadow: 0 0 14px #ff06; transition: all 0.1s;
-        }
-        #name-confirm:hover { background: #ffff00; color: #000; text-shadow: none; }
-
-        /* Tabela high scores */
-        #highscore-table { margin-top: 14px; }
-        .hs-title {
-            font-size: 18px; color: #ff8800; letter-spacing: 4px;
-            text-shadow: 0 0 8px #f80; text-align: center; margin-bottom: 5px;
-        }
-        .hs-row {
-            display: flex; gap: 8px; font-size: 20px;
-            padding: 2px 8px; min-width: 300px;
-        }
-        .hs-rank  { color: #555; width: 24px; text-align: right; }
-        .hs-name  { color: #ffff00; width: 110px; text-shadow: 0 0 4px #ff04; }
-        .hs-score { color: #fff; width: 80px; text-align: right; }
-        .hs-time  { color: #888; width: 52px; text-align: right; }
-        .hs-new .hs-rank, .hs-new .hs-name,
-        .hs-new .hs-score, .hs-new .hs-time {
-            color: #00ff88 !important; text-shadow: 0 0 6px #0f8 !important;
+        #highscore-table{margin-top:10px}
+        .hs-title{font-size:15px;color:#ff8800;letter-spacing:4px;text-shadow:0 0 8px #f80;text-align:center;margin-bottom:3px}
+        .hs-row  {display:flex;gap:8px;font-size:16px;padding:1px 5px;min-width:250px}
+        .hs-rank {color:#555;width:20px;text-align:right}
+        .hs-name {color:#ffff00;width:86px;text-shadow:0 0 4px #ff04}
+        .hs-score{color:#fff;width:68px;text-align:right}
+        .hs-time {color:#888;width:44px;text-align:right}
+        .hs-new .hs-rank,.hs-new .hs-name,.hs-new .hs-score,.hs-new .hs-time{
+            color:#00ff88!important;text-shadow:0 0 6px #0f8!important
         }
     </style>
 </head>
 <body>
 
-<div id="hud" class="hidden">
-    <div id="score-box">WYNIK &nbsp; <span id="score">0</span></div>
-    <div id="timer-box">CZAS &nbsp; <span id="timer">0:00</span></div>
-    <div id="lives-box">ŻYCIA &nbsp; <span id="lives">3</span></div>
+<!-- TŁO SALONU -->
+<div class="room-ceiling"></div>
+<div class="room-ambient"></div>
+<div class="room-floor"></div>
+
+<!-- AUTOMAT -->
+<div class="arcade-machine">
+
+    <!-- MARQUEE -->
+    <div class="arc-marquee">
+        <div class="mq-lights top">
+            <div class="dot y a"></div><div class="dot o b"></div>
+            <div class="dot y a"></div><div class="dot r b"></div>
+            <div class="dot y a"></div><div class="dot o b"></div>
+            <div class="dot c a"></div><div class="dot y b"></div>
+            <div class="dot o a"></div><div class="dot y b"></div>
+            <div class="dot r a"></div><div class="dot y b"></div>
+        </div>
+        <div class="mq-title">PAC&#8209;MAN</div>
+        <div class="mq-sub">3 D &nbsp; E D I T I O N</div>
+        <div class="mq-lights bottom">
+            <div class="dot y b"></div><div class="dot r a"></div>
+            <div class="dot y b"></div><div class="dot o a"></div>
+            <div class="dot y b"></div><div class="dot c b"></div>
+            <div class="dot y a"></div><div class="dot o b"></div>
+            <div class="dot y a"></div><div class="dot r b"></div>
+            <div class="dot y a"></div><div class="dot o b"></div>
+        </div>
+    </div>
+
+    <!-- CIAŁO -->
+    <div class="arc-body">
+        <div class="arc-side">
+            <div class="vent"></div><div class="vent"></div><div class="vent"></div>
+            <div class="vent"></div><div class="vent"></div><div class="vent"></div>
+            <div class="vent"></div><div class="vent"></div>
+        </div>
+
+        <div class="arc-screen-wrap">
+            <div class="arc-bezel">
+                <div id="screen-container">
+                    <canvas></canvas>
+
+                    <div id="hud" class="hidden">
+                        <div id="score-box">WYNIK &nbsp;<span id="score">0</span></div>
+                        <div id="timer-box">CZAS &nbsp;<span id="timer">0:00</span></div>
+                        <div id="lives-box">ŻYCIA &nbsp;<span id="lives">3</span></div>
+                    </div>
+
+                    <div id="ghost-timers" class="hidden">
+                        <div class="g-timer" id="gt-0"><span class="g-dot" style="background:#f00"></span><span class="g-name">BLINKY</span><span class="g-count" id="gc-0">5</span></div>
+                        <div class="g-timer" id="gt-1"><span class="g-dot" style="background:#ffb8ff"></span><span class="g-name">PINKY</span><span class="g-count" id="gc-1">5</span></div>
+                        <div class="g-timer" id="gt-2"><span class="g-dot" style="background:#0ff"></span><span class="g-name">INKY</span><span class="g-count" id="gc-2">5</span></div>
+                        <div class="g-timer" id="gt-3"><span class="g-dot" style="background:#ffb852"></span><span class="g-name">CLYDE</span><span class="g-count" id="gc-3">5</span></div>
+                    </div>
+
+                    <div id="overlay">
+                        <h1 id="overlayTitle">PACMAN 3D</h1>
+                        <p class="subtitle" id="overlayMsg">ZJEDZ WSZYSTKIE KULKI</p>
+                        <p class="hint" id="hintControls">STRZAŁKI / WASD – RUCH &nbsp;|&nbsp; P – PAUZA</p>
+                        <p class="hint" id="hintPellet">BIAŁA KULKA = DUCHY DO ZJEDZENIA PRZEZ 8 SEK</p>
+
+                        <div id="diff-select">
+                            <button class="diff-btn" data-diff="easy">ŁATWY</button>
+                            <button class="diff-btn" data-diff="normal">NORMALNY</button>
+                            <button class="diff-btn" data-diff="hard">TRUDNY</button>
+                        </div>
+
+                        <button id="resumeBtn" class="hidden">WZNÓW</button>
+
+                        <div id="name-entry" class="hidden">
+                            <input id="name-input" type="text" maxlength="8"
+                                   placeholder="NICK" spellcheck="false" autocomplete="off">
+                            <button id="name-confirm">ZAPISZ</button>
+                        </div>
+
+                        <div id="highscore-table" class="hidden">
+                            <p class="hs-title">★ HIGH SCORES ★</p>
+                            <div id="hs-list"></div>
+                        </div>
+                    </div>
+
+                    <div class="crt-overlay"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arc-side r">
+            <div class="vent"></div><div class="vent"></div><div class="vent"></div>
+            <div class="vent"></div><div class="vent"></div><div class="vent"></div>
+            <div class="vent"></div><div class="vent"></div>
+        </div>
+    </div>
+
+    <!-- PANEL STEROWANIA -->
+    <div class="arc-panel-outer">
+        <div class="arc-panel-surface">
+            <div class="joystick-base">
+                <div class="joystick-shaft">
+                    <div class="joystick-ball"></div>
+                </div>
+            </div>
+            <div class="panel-btns">
+                <div class="start-btn p1">1P</div>
+                <div class="start-btn p2">2P</div>
+            </div>
+            <div class="panel-speaker">
+                <div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div>
+                <div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div>
+                <div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div>
+                <div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div>
+                <div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DRZWICZKI MONETARNE -->
+    <div class="arc-coin-door">
+        <div class="coin-slot-unit">
+            <div class="coin-door-label">INSERT COIN</div>
+            <div id="coinSlot"></div>
+        </div>
+        <div class="service-panel">
+            <div class="service-led"></div>
+        </div>
+    </div>
+
+    <!-- NOGI -->
+    <div class="arc-base">
+        <div class="base-top"></div>
+        <div class="base-legs">
+            <div class="leg"></div>
+            <div class="leg"></div>
+        </div>
+    </div>
+
 </div>
-
-<!-- Timery respawnu duchów -->
-<div id="ghost-timers" class="hidden">
-    <div class="g-timer" id="gt-0">
-        <span class="g-dot" style="background:#ff0000"></span>
-        <span class="g-name">BLINKY</span>
-        <span class="g-count" id="gc-0">5</span>
-    </div>
-    <div class="g-timer" id="gt-1">
-        <span class="g-dot" style="background:#ffb8ff"></span>
-        <span class="g-name">PINKY</span>
-        <span class="g-count" id="gc-1">5</span>
-    </div>
-    <div class="g-timer" id="gt-2">
-        <span class="g-dot" style="background:#00ffff"></span>
-        <span class="g-name">INKY</span>
-        <span class="g-count" id="gc-2">5</span>
-    </div>
-    <div class="g-timer" id="gt-3">
-        <span class="g-dot" style="background:#ffb852"></span>
-        <span class="g-name">CLYDE</span>
-        <span class="g-count" id="gc-3">5</span>
-    </div>
-</div>
-
-<div id="overlay">
-    <h1 id="overlayTitle">PACMAN 3D</h1>
-    <p class="subtitle" id="overlayMsg">ZJEDZ WSZYSTKIE KULKI</p>
-    <p class="hint" id="hintControls">STRZAŁKI / WASD – RUCH &nbsp;|&nbsp; P – PAUZA</p>
-    <p class="hint" id="hintPellet">BIAŁA KULKA = DUCHY DO ZJEDZENIA PRZEZ 8 SEK</p>
-
-    <!-- Wybór poziomu trudności (ekran startowy / po grze) -->
-    <div id="diff-select">
-        <button class="diff-btn" data-diff="easy">ŁATWY</button>
-        <button class="diff-btn" data-diff="normal">NORMALNY</button>
-        <button class="diff-btn" data-diff="hard">TRUDNY</button>
-    </div>
-
-    <!-- Przycisk wznowienia widoczny tylko przy pauzie -->
-    <button id="resumeBtn" class="hidden">WZNÓW</button>
-
-    <!-- Wpisywanie nicku (po zakończeniu gry) -->
-    <div id="name-entry" class="hidden">
-        <input id="name-input" type="text" maxlength="8" placeholder="NICK"
-               spellcheck="false" autocomplete="off">
-        <button id="name-confirm">ZAPISZ</button>
-    </div>
-
-    <!-- Tabela high scores -->
-    <div id="highscore-table" class="hidden">
-        <p class="hs-title">★ HIGH SCORES ★</p>
-        <div id="hs-list"></div>
-    </div>
-</div>
-
-<canvas></canvas>
 
 <script type="importmap">
 {
