@@ -29,8 +29,8 @@ function getScreenSize() {
     return { w: screenContainer.clientWidth, h: screenContainer.clientHeight };
 }
 
-const _s0 = getScreenSize();
-renderer.setSize(_s0.w, _s0.h, false);
+const initialSize = getScreenSize();   // rozmiar ekranu przy starcie (przed pierwszym resize)
+renderer.setSize(initialSize.w, initialSize.h, false);
 
 // ============================================================
 // 2. SCENA
@@ -44,7 +44,7 @@ scene.fog = new THREE.FogExp2(0x000008, 0.010);
 // 3. KAMERA
 // ============================================================
 
-const camera = new THREE.PerspectiveCamera(58, _s0.w / _s0.h, 0.1, 220);
+const camera = new THREE.PerspectiveCamera(58, initialSize.w / initialSize.h, 0.1, 220);
 camera.position.set(0, 44, 20);
 camera.lookAt(0, 0, 1);
 
@@ -92,7 +92,7 @@ scene.add(ghostSpot.target);
 // 5. LABIRYNT I POSTACIE
 // ============================================================
 
-const { dotGroup, dotMap, totalDots } = buildMaze(scene);
+const { dotGroup, dotMap, totalDots, resetDots } = buildMaze(scene);
 
 const pacman = new Pacman(PACMAN_START.col, PACMAN_START.row);
 scene.add(pacman.group);
@@ -139,7 +139,8 @@ const diffSelect     = document.getElementById('diff-select');
 const resumeBtn      = document.getElementById('resumeBtn');
 const hintControls   = document.getElementById('hintControls');
 const hintPellet     = document.getElementById('hintPellet');
-const coinSlotEl = document.getElementById('coinSlot');
+const coinSlotEl    = document.getElementById('coinSlot');
+const playAgainBtn  = document.getElementById('playAgainBtn');
 
 const ghostTimerRows   = [0, 1, 2, 3].map(i => document.getElementById(`gt-${i}`));
 const ghostTimerCounts = [0, 1, 2, 3].map(i => document.getElementById(`gc-${i}`));
@@ -156,22 +157,36 @@ const hsList      = document.getElementById('hs-list');
 // ============================================================
 
 const HS_KEY    = 'pacman3d_hs';
-const HS_MAX    = 5;
+const HS_MAX    = 5;   // maksymalna liczba wpisów w tabeli
 
+/** Wczytuje tablicę wyników z localStorage. Zwraca [] przy błędzie lub braku danych. */
 function loadHS() {
     try { return JSON.parse(localStorage.getItem(HS_KEY)) || []; }
     catch { return []; }
 }
 
+/** Zapisuje tablicę wyników do localStorage jako JSON. */
 function saveHS(list) {
     localStorage.setItem(HS_KEY, JSON.stringify(list));
 }
 
+/**
+ * Sprawdza, czy podany wynik kwalifikuje się do tablicy top-5.
+ * @param {number} sc – wynik do sprawdzenia
+ * @returns {boolean}
+ */
 function qualifiesHS(sc) {
     const list = loadHS();
     return list.length < HS_MAX || sc > list[list.length - 1].score;
 }
 
+/**
+ * Dodaje nowy wpis do tablicy wyników, sortuje malejąco i przycina do HS_MAX.
+ * @param {string} name – nick gracza (max 3 znaki, domyślnie 'AAA')
+ * @param {number} sc   – wynik punktowy
+ * @param {string} time – czas gry sformatowany jako M:SS
+ * @returns {number} indeks nowego wpisu po posortowaniu (-1 jeśli nie znaleziono)
+ */
 function insertHS(name, sc, time) {
     const list = loadHS();
     list.push({ name: name.toUpperCase().trim() || 'AAA', score: sc, time });
@@ -181,6 +196,10 @@ function insertHS(name, sc, time) {
     return list.findIndex(e => e.name === name.toUpperCase().trim() && e.score === sc && e.time === time);
 }
 
+/**
+ * Renderuje tablicę wyników do #hs-list.
+ * @param {number} newIdx – indeks nowo dodanego wpisu (podświetlony klasą 'hs-new'), -1 = brak
+ */
 function renderHS(newIdx = -1) {
     const list = loadHS();
     if (list.length === 0) { hsList.innerHTML = ''; return; }
@@ -193,9 +212,16 @@ function renderHS(newIdx = -1) {
         </div>`).join('');
 }
 
+// Tymczasowe przechowanie wyniku i czasu gdy gracz wpisuje nick do tablicy HS
 let pendingScore = 0;
 let pendingTime  = '';
 
+/**
+ * Pokazuje formularz wpisywania nicku do tablicy wyników.
+ * Chowa tabelę HS (pojawi się po zatwierdzeniu). Ustawia focus na pole tekstowe.
+ * @param {number} sc      – wynik do zapisania (przechowany w pendingScore)
+ * @param {string} timeStr – czas gry M:SS (przechowany w pendingTime)
+ */
 function showNameEntry(sc, timeStr) {
     pendingScore = sc;
     pendingTime  = timeStr;
@@ -205,11 +231,13 @@ function showNameEntry(sc, timeStr) {
     setTimeout(() => nameInput.focus(), 50);
 }
 
+/** Zatwierdza wpisany nick, zapisuje wynik do HS i pokazuje zaktualizowaną tabelę. */
 function submitName() {
     const idx = insertHS(nameInput.value, pendingScore, pendingTime);
     nameEntry.classList.add('hidden');
     renderHS(idx);
     hsTable.classList.remove('hidden');
+    playAgainBtn.classList.remove('hidden');
 }
 
 nameConfirm.addEventListener('click', submitName);
@@ -222,7 +250,11 @@ nameInput.addEventListener('keydown', e => {
 // 7. ZARZĄDZANIE EKRANAMI
 // ============================================================
 
-// ── Animacja monety przy wyborze trudności ────────────────────────────────────────
+/**
+ * Odtwarza animację monety wpadającej do szczeliny, po czym uruchamia grę.
+ * Przez czas animacji blokuje przyciski trudności, by uniknąć podwójnego kliknięcia.
+ * @param {string} diffKey – klucz trudności ('easy' | 'normal' | 'hard')
+ */
 function playCoinThenStart(diffKey) {
     document.querySelectorAll('.diff-btn').forEach(b => b.style.pointerEvents = 'none');
 
@@ -251,7 +283,7 @@ function playCoinThenStart(diffKey) {
     }, 720);
 }
 
-/** Ekran wyboru trudności (start / po grze) */
+/** Ekran wyboru trudności (start / po kliknięciu "zagraj ponownie") */
 function showDiffSelect(title, msg, blink = true) {
     stopMusic();
     gameState = State.WAITING;
@@ -262,6 +294,7 @@ function showDiffSelect(title, msg, blink = true) {
     hintControls.classList.remove('hidden');
     hintPellet.classList.remove('hidden');
     resumeBtn.classList.add('hidden');
+    playAgainBtn.classList.add('hidden');
     nameEntry.classList.add('hidden');
     hud.classList.add('hidden');
     ghostTimers.classList.add('hidden');
@@ -270,8 +303,31 @@ function showDiffSelect(title, msg, blink = true) {
     hsTable.classList.remove('hidden');
 }
 
+/** Ekran końca gry (win / game over) – pokazuje wyniki i przycisk "zagraj ponownie" */
+function showEndScreen(title, msg, blink = true) {
+    stopMusic();
+    gameState = State.WAITING;
+    overlayTitle.textContent = title;
+    overlayTitle.className   = blink ? '' : 'no-blink';
+    overlayMsg.textContent   = msg;
+    diffSelect.classList.add('hidden');
+    hintControls.classList.add('hidden');
+    hintPellet.classList.add('hidden');
+    resumeBtn.classList.add('hidden');
+    nameEntry.classList.add('hidden');
+    hud.classList.add('hidden');
+    ghostTimers.classList.add('hidden');
+    overlay.classList.remove('hidden');
+    renderHS();
+    hsTable.classList.remove('hidden');
+    playAgainBtn.classList.remove('hidden');
+}
 
-/** Pauza / wznowienie */
+
+/**
+ * Przełącza stan pauzy: PLAYING → PAUSED (zatrzymuje muzykę, pokazuje overlay)
+ * lub PAUSED → PLAYING (wznawia muzykę, ukrywa overlay).
+ */
 function togglePause() {
     if (gameState === State.PLAYING) {
         gameState = State.PAUSED;
@@ -297,10 +353,11 @@ function startGame(diffKey) {
     const cfg = DIFFICULTIES[diffKey];
     activeGhostCount = cfg.activeGhosts;
 
-    gameState = State.PLAYING;
-    score     = 0;
-    lives     = 3;
-    dotsLeft  = totalDots;
+    gameState     = State.PLAYING;
+    score         = 0;
+    lives         = 3;
+    deathCooldown = 0;
+    dotsLeft      = resetDots();
     scoreEl.textContent = score;
     livesEl.textContent = lives;
 
@@ -328,11 +385,16 @@ function startGame(diffKey) {
 
 // Obsługa kliknięcia przycisków trudności
 document.querySelectorAll('.diff-btn').forEach(btn => {
-    btn.addEventListener('click', () => startGame(btn.dataset.diff));
+    btn.addEventListener('click', () => playCoinThenStart(btn.dataset.diff));
 });
 
 // Przycisk wznowienia (pauza)
 resumeBtn.addEventListener('click', () => togglePause());
+
+// Przycisk "zagraj ponownie" (po game over / wygranej)
+playAgainBtn.addEventListener('click', () =>
+    showDiffSelect('PAC-MAN 3D', 'ZJEDZ WSZYSTKIE KULKI', true)
+);
 
 // ============================================================
 // 8. STEROWANIE KLAWIATURĄ
@@ -357,6 +419,11 @@ window.addEventListener('keydown', e => {
 // 9. KOLIZJE
 // ============================================================
 
+/**
+ * Sprawdza, czy Pacman stoi na kulce lub power pellecie i ją zbiera.
+ * Pellet aktywuje tryb strachu u duchów na SCARED_DURATION sekund.
+ * Zebranie ostatniej kulki kończy grę (wygrana).
+ */
 function checkDotPickup() {
     const { col, row } = pacman.getGridPos();
     const dot = dotMap.get(`${col},${row}`);
@@ -364,7 +431,6 @@ function checkDotPickup() {
 
     dotMap.delete(`${col},${row}`);
     dotGroup.remove(dot);
-    dot.geometry.dispose();
     dotsLeft--;
 
     if (dot.userData.isPellet) {
@@ -380,34 +446,35 @@ function checkDotPickup() {
     }
 
     if (dotsLeft <= 0) {
-        const bonus = calcTimeBonus(elapsedTime);
-        score += bonus;
+        const bonus   = calcTimeBonus(elapsedTime);
+        score        += bonus;
         scoreEl.textContent = score;
         soundWin();
         const timeStr = formatTime(elapsedTime);
-        const msg = `WYNIK: ${score}  |  CZAS: ${timeStr}  |  BONUS: +${bonus}`;
+        const msg     = `WYNIK: ${score}  |  CZAS: ${timeStr}  |  BONUS: +${bonus}`;
+
         if (qualifiesHS(score)) {
-            stopMusic();
-            gameState = State.GAMEOVER;
-            overlayTitle.textContent = 'WYGRAŁEŚ!';
-            overlayTitle.className   = 'no-blink';
-            overlayMsg.textContent   = msg;
-            diffSelect.classList.add('hidden');
-            resumeBtn.classList.add('hidden');
-            hintControls.classList.add('hidden');
-            hintPellet.classList.add('hidden');
-            hud.classList.add('hidden');
-            ghostTimers.classList.add('hidden');
-            overlay.classList.remove('hidden');
-            hsTable.classList.add('hidden');
+            // Wynik kwalifikuje się do tablicy – pokaż ekran końca i formularz nicku.
+            // playAgainBtn pojawi się automatycznie po zatwierdzeniu nicku w submitName().
+            showEndScreen('WYGRAŁEŚ!', msg, false);
+            playAgainBtn.classList.add('hidden');   // ukryj do czasu zapisu nicku
+            hsTable.classList.add('hidden');         // ukryj – pojawi się po wpisaniu nicku
             showNameEntry(score, timeStr);
         } else {
-            showDiffSelect('WYGRAŁEŚ!', msg, false);
+            showEndScreen('WYGRAŁEŚ!', msg, false);
         }
     }
 }
 
-let deathCooldown = 0;
+/**
+ * Sprawdza kolizje Pacmana z duchami każdą klatkę.
+ * - Jeśli duch jest przestraszony → zjedzenie (+200 pkt, duch trafia na respawn).
+ * - Jeśli duch normalny → utrata życia; jeśli brak żyć → koniec gry.
+ * deathCooldown zapobiega wielokrotnym zgondom w tej samej chwili.
+ * @param {number} dt – czas klatki w sekundach
+ */
+
+let deathCooldown = 0;   // sekundy blokady po zgonie (zapobiega podwójnemu trafieniu)
 
 function checkGhostCollision(dt) {
     if (deathCooldown > 0) { deathCooldown -= dt; return; }
@@ -435,7 +502,7 @@ function checkGhostCollision(dt) {
                 deathCooldown = 1.0;
 
                 if (lives <= 0) {
-                    showDiffSelect('GAME OVER', `WYNIK: ${score}`, true);
+                    showEndScreen('GAME OVER', `WYNIK: ${score}`, true);
                 } else {
                     pacman.reset(PACMAN_START.col, PACMAN_START.row);
                     ghosts.forEach((gh, j) => {
@@ -449,7 +516,10 @@ function checkGhostCollision(dt) {
     }
 }
 
-/** Aktualizuje panel timerów respawnu po lewej stronie */
+/**
+ * Aktualizuje panel timerów respawnu po lewej stronie ekranu.
+ * Podświetla wiersz ducha i pokazuje pozostały czas (w sekundach) gdy duch jest martwy.
+ */
 function updateGhostTimerUI() {
     for (let i = 0; i < activeGhostCount; i++) {
         const g = ghosts[i];
@@ -467,8 +537,9 @@ function updateGhostTimerUI() {
 // ============================================================
 
 const clock    = new THREE.Clock();
-let pulseTimer = 0;
+let pulseTimer = 0;   // globalny licznik czasu do animacji pulsowania pelletów
 
+/** Główna pętla renderowania – wywoływana przez requestAnimationFrame co klatkę. */
 function animate() {
     requestAnimationFrame(animate);
     const dt = clock.getDelta();

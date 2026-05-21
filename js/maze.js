@@ -43,9 +43,21 @@ export const GHOST_STARTS = [
     { col: 9,  row: 10 },
 ];
 
+/** Zamienia indeks kolumny siatki na współrzędną X w przestrzeni Three.js (środek komórki). */
 export function colToX(col) { return (col - COLS / 2 + 0.5) * CELL; }
+
+/** Zamienia indeks wiersza siatki na współrzędną Z w przestrzeni Three.js (środek komórki). */
 export function rowToZ(row) { return (row - ROWS / 2 + 0.5) * CELL; }
 
+/**
+ * Sprawdza, czy Pacman może wejść na podaną komórkę.
+ * Zwraca false dla CELL_WALL i CELL_GHOST_HOUSE (Pacman nie wchodzi do bazy).
+ * Obsługuje tunel: kolumna spoza [0, COLS) oznacza wraparound – sprawdzany jest
+ * skrajny wiersz z drugiej strony mapy (jeśli nie jest ścianą).
+ * @param {number} col – kolumna w MAZE_LAYOUT
+ * @param {number} row – wiersz w MAZE_LAYOUT
+ * @returns {boolean}
+ */
 export function isWalkable(col, row) {
     if (row < 0 || row >= ROWS) return false;
     if (col < 0 || col >= COLS) {
@@ -61,6 +73,13 @@ export function isGhostHouseCell(col, row) {
     return MAZE_LAYOUT[row][col] === CELL_GHOST_HOUSE;
 }
 
+/**
+ * Wersja isWalkable dla duchów – duchy mogą wchodzić do CELL_GHOST_HOUSE
+ * (własna baza), podczas gdy Pacman nie ma do niej dostępu.
+ * @param {number} col – kolumna w MAZE_LAYOUT
+ * @param {number} row – wiersz w MAZE_LAYOUT
+ * @returns {boolean}
+ */
 export function isWalkableGhost(col, row) {
     if (row < 0 || row >= ROWS) return false;
     if (col < 0 || col >= COLS) {
@@ -70,7 +89,7 @@ export function isWalkableGhost(col, row) {
 }
 
 // ------------------------------------------------------------
-// Generowanie podłogowej tekstury (szachownica)
+// Tekstura podłogi – szachownica z ciemnych kwadratów
 // ------------------------------------------------------------
 function createFloorTexture() {
     const s = 64;
@@ -84,6 +103,94 @@ function createFloorTexture() {
     const t = new THREE.CanvasTexture(cv);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(COLS, ROWS);
+    return t;
+}
+
+// ------------------------------------------------------------
+// Tekstura ścian – wzór obwodu drukowanego (circuit board).
+// Ciemne tło + neonowa niebieska siatka + świecące węzły na przecięciach.
+// repeat.set(1, WALL_HEIGHT/CELL) dopasowuje proporcje do bryły BoxGeometry.
+// ------------------------------------------------------------
+function createWallTexture() {
+    const s   = 128;
+    const cv  = document.createElement('canvas');
+    cv.width = cv.height = s;
+    const ctx = cv.getContext('2d');
+
+    // Ciemny granatowy podkład
+    ctx.fillStyle = '#010a22';
+    ctx.fillRect(0, 0, s, s);
+
+    // Siatka linii – imitacja ścieżek PCB
+    const step = 32;
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= s; i += step) {
+        ctx.strokeStyle = 'rgba(20, 70, 210, 0.6)';
+        ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(s, i); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, s); ctx.stroke();
+    }
+
+    // Glowing węzły na przecięciach linii (gradient radial → efekt poświaty)
+    for (let y = 0; y <= s; y += step) {
+        for (let x = 0; x <= s; x += step) {
+            const grd = ctx.createRadialGradient(x, y, 0, x, y, 6);
+            grd.addColorStop(0, 'rgba(60, 140, 255, 1.0)');
+            grd.addColorStop(0.4, 'rgba(20, 80, 220, 0.6)');
+            grd.addColorStop(1,   'rgba(0, 20, 120, 0)');
+            ctx.fillStyle = grd;
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // Krótkie losowe "ścieżki" PCB między węzłami (dekoracja)
+    ctx.strokeStyle = 'rgba(30, 90, 220, 0.35)';
+    ctx.lineWidth = 2;
+    [[0,0,step,0],[step,0,step,step],[0,step,step,step],[0,0,0,step],
+     [step,step,s,step],[s,0,s,step]].forEach(([x1,y1,x2,y2]) => {
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    });
+
+    const t = new THREE.CanvasTexture(cv);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    // Ściana ma proporcje CELL × WALL_HEIGHT = 2 × 1.6 → repeat Y = 0.8
+    t.repeat.set(1, WALL_HEIGHT / CELL);
+    return t;
+}
+
+// ------------------------------------------------------------
+// Tekstura bazy duchów – różowo-fioletowy wzór diamentowy.
+// Kafelki z ukośnymi liniami sygnalizują strefę "niebezpieczną".
+// ------------------------------------------------------------
+function createGhostHouseTexture() {
+    const s  = 64;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = s;
+    const ctx = cv.getContext('2d');
+
+    // Ciemne fioletowe tło
+    ctx.fillStyle = '#0e0018';
+    ctx.fillRect(0, 0, s, s);
+
+    // Ukośna siatka – diamentowy wzór
+    ctx.strokeStyle = 'rgba(180, 0, 140, 0.45)';
+    ctx.lineWidth = 1;
+    for (let i = -s; i <= s * 2; i += 16) {
+        ctx.beginPath(); ctx.moveTo(i, 0);       ctx.lineTo(i + s, s); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(i, 0);       ctx.lineTo(i - s, s); ctx.stroke();
+    }
+
+    // Subtelna poświata w centrum kafelka
+    const grd = ctx.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+    grd.addColorStop(0,   'rgba(200, 0, 160, 0.18)');
+    grd.addColorStop(1,   'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, s, s);
+
+    const t = new THREE.CanvasTexture(cv);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(1, 1);
     return t;
 }
 
@@ -144,14 +251,24 @@ function buildWallEdges() {
 // ------------------------------------------------------------
 // Budowanie labiryntu
 // ------------------------------------------------------------
+/**
+ * Buduje całą scenę 3D labiryntu i zwraca obiekty potrzebne do zarządzania kulkami.
+ * Tworzy i dodaje do sceny: ściany z teksturą PCB, neonowe krawędzie,
+ * podłogę (szachownica), kafelki bazy duchów, grupę kulek/pelletów.
+ * @param {THREE.Scene} scene – scena Three.js, do której dodawane są wszystkie elementy
+ * @returns {{ dotGroup: THREE.Group, dotMap: Map<string, THREE.Mesh>,
+ *             totalDots: number, resetDots: function(): number }}
+ */
 export function buildMaze(scene) {
     const dotGroup = new THREE.Group();
     const dotMap   = new Map();
+    const allDots  = [];   // zachowujemy referencje – do resetu przy nowej grze
 
-    // --- Ściany: ciemne bryły + neonowe krawędzie ---
+    // --- Ściany: ciemne bryły z teksturą PCB + neonowe krawędzie ---
     const wallGeo = new THREE.BoxGeometry(CELL, WALL_HEIGHT, CELL);
-    // Ciemnoniebieska bryła z wyraźną niebieską emisją – klasyczny Pacman arcade look
+    // Ciemnoniebieska bryła z teksturą obwodu drukowanego i neonową emisją
     const wallMat = new THREE.MeshPhongMaterial({
+        map:               createWallTexture(),   // tekstura circuit board
         color:             0x001155,
         emissive:          0x0033aa,
         emissiveIntensity: 0.8,
@@ -198,6 +315,7 @@ export function buildMaze(scene) {
                 dot.position.set(x, 0.48, z);
                 dotGroup.add(dot);
                 dotMap.set(`${col},${row}`, dot);
+                allDots.push({ key: `${col},${row}`, mesh: dot });
                 totalDots++;
             } else if (type === CELL_PELLET) {
                 const pellet = new THREE.Mesh(pelletGeo, pelletMat);
@@ -205,12 +323,13 @@ export function buildMaze(scene) {
                 pellet.userData.isPellet = true;
                 dotGroup.add(pellet);
                 dotMap.set(`${col},${row}`, pellet);
+                allDots.push({ key: `${col},${row}`, mesh: pellet });
                 totalDots++;
             }
         }
     }
 
-    // --- Podłoga ---
+    // --- Podłoga główna ---
     const floorGeo = new THREE.PlaneGeometry(COLS * CELL, ROWS * CELL);
     const floorMat = new THREE.MeshPhongMaterial({
         map: createFloorTexture(), color: COLOR_FLOOR
@@ -219,10 +338,47 @@ export function buildMaze(scene) {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
 
+    // --- Kafelki bazy duchów – osobna tekstura na podłodze ghost house ---
+    // Lekko uniesione (y=0.01) żeby były widoczne nad główną podłogą.
+    const ghFloorGeo = new THREE.PlaneGeometry(CELL, CELL);
+    const ghFloorMat = new THREE.MeshPhongMaterial({
+        map:      createGhostHouseTexture(),
+        color:    0x220033,
+        emissive: 0x110022,
+        emissiveIntensity: 0.5,
+        transparent: true,
+        opacity: 0.85,
+    });
+    const ghGroup = new THREE.Group();
+    for (let row = 0; row < ROWS; row++) {
+        for (let col = 0; col < COLS; col++) {
+            if (MAZE_LAYOUT[row][col] !== CELL_GHOST_HOUSE) continue;
+            const tile = new THREE.Mesh(ghFloorGeo, ghFloorMat);
+            tile.rotation.x = -Math.PI / 2;
+            tile.position.set(colToX(col), 0.01, rowToZ(row));
+            tile.receiveShadow = true;
+            ghGroup.add(tile);
+        }
+    }
+
     scene.add(wallGroup);
     scene.add(wallEdges);
     scene.add(dotGroup);
     scene.add(floor);
+    scene.add(ghGroup);
 
-    return { dotGroup, dotMap, totalDots };
+    /** Przywraca wszystkie kulki do sceny (używane przy starcie nowej gry) */
+    function resetDots() {
+        dotMap.clear();
+        // Usuń tylko dotGroup children (nie usuwamy meshów – reużywamy je)
+        while (dotGroup.children.length > 0) dotGroup.remove(dotGroup.children[0]);
+        allDots.forEach(({ key, mesh }) => {
+            mesh.scale.setScalar(1);   // resetuj skalę (pulsujące pellety)
+            dotGroup.add(mesh);
+            dotMap.set(key, mesh);
+        });
+        return totalDots;
+    }
+
+    return { dotGroup, dotMap, totalDots, resetDots };
 }

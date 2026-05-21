@@ -62,7 +62,13 @@ export function stopMusic() {
 }
 
 export function pauseMusic() { stopMusic(); }
-export function resumeMusic() { startMusic(); }
+
+/** Wznawia muzykę od miejsca gdzie skończyła (nie resetuje indeksu nuty) */
+export function resumeMusic() {
+    if (musicPlaying) return;
+    musicPlaying = true;
+    playNextNote();
+}
 
 /**
  * Odgrywa pojedynczy ton.

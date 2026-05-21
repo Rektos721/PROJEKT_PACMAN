@@ -3,11 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <title>Pacman 3D – Grafika Komputerowa</title>
+
+    <!--
+        VT323 – pikselowa czcionka retro z Google Fonts.
+        preconnect przyspiesza ładowanie przez wcześniejsze DNS lookup.
+    -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+
     <style>
+        /*
+        ════════════════════════════════════════════════════════════════
+        INTERFEJS UŻYTKOWNIKA – AUTOMAT ARCADE (CSS-only)
+        ════════════════════════════════════════════════════════════════
+
+        Całe UI gry zaprojektowano jako trójwymiarowy automat arcade lat 80.
+        Automat zbudowany jest wyłącznie z HTML i CSS – bez żadnych obrazków
+        ani bibliotek graficznych. Efekt 3D uzyskano przez:
+
+          • wielowarstwowe box-shadow (boczne krawędzie, poświata, cień)
+          • CSS perspective + rotateX (pochylony panel sterowania)
+          • radial-gradient i linear-gradient (symulacja oświetlenia, połysku)
+          • repeating-linear-gradient (siatka podłogi, kratka głośnika, prążki)
+          • CSS transform: rotateX (perspektywiczna siatka podłogi salonu gier)
+          • animacje @keyframes (migające diody, migotanie CRT, animacja monety)
+          • mask-image (zanik siatki podłogi na horyzoncie)
+
+        Struktura automatu (od góry do dołu):
+        ┌─────────────────────────────────┐
+        │  .arc-marquee   – tablica tytu- │  neon "PAC-MAN" + migające diody
+        │                   łowa          │
+        ├──┬──────────────────────────┬───┤
+        │  │  .arc-screen-wrap        │   │  ekran z boczną wentylacją
+        │.a│    .arc-bezel            │.a │
+        │r │      #screen-container   │r  │  ← tutaj renderuje Three.js (WebGL)
+        │c │        <canvas>          │c  │
+        │-s│        #hud              │-s │
+        │i │        #ghost-timers     │i  │
+        │d │        #overlay          │d  │
+        │e │        .crt-overlay      │e.r│
+        ├──┴──────────────────────────┴───┤
+        │  .arc-panel-outer               │  pochylony panel sterowania
+        │    joystick | przyciski | głoś. │  transform: rotateX(-7deg)
+        ├─────────────────────────────────┤
+        │  .arc-coin-door                 │  szczelina na monety + serwis LED
+        ├─────────────────────────────────┤
+        │  .arc-base  (.leg .leg)         │  podstawa z dwiema nogami
+        └─────────────────────────────────┘
+
+        Za automatem (z-index:0) renderowane są trzy warstwy tła salonu gier:
+          .room-ceiling  – neonowe belki świetlne przy suficie
+          .room-ambient  – rozlane odbicia neonów na ścianach
+          .room-floor    – perspektywiczna siatka podłogi (retro arcade)
+
+        Efekt monitora CRT składa się z trzech pseudo-elementów .crt-overlay:
+          (element)  – poziome linie skanowania (scanlines, co 4px)
+          ::before   – winietowanie (ciemnienie rogów jak zakrzywiony kineskop)
+          ::after    – losowe migotanie (animation: crtFlicker, step-end)
+        ════════════════════════════════════════════════════════════════
+        */
+
+        /* Reset marginesów i paddingów dla wszystkich elementów.
+           box-sizing:border-box sprawia że padding/border nie powiększają rozmiaru elementu. */
         * { margin:0; padding:0; box-sizing:border-box; }
 
+        /* Pełny ekran, wycentrowany automat, czarne tło sali gier. */
         body {
             width:100vw; height:100vh; overflow:hidden;
             font-family:'VT323',monospace;
@@ -16,11 +76,14 @@
         }
 
         /* ══ TŁO SALONU GER ══════════════════════════════════
-           Sufit: neonowe belki + ambient
-           Podłoga: siatka w perspektywie (retro arcade classic)
+           Trzy warstwy dekoracyjne (z-index:0) renderowane za automatem:
+             1. .room-ceiling  – cienki pasek neonowych belek świetlnych przy suficie
+             2. .room-ambient  – rozmazane gradienty radial symulujące odbicia neonów na ścianach
+             3. .room-floor    – perspektywiczna siatka fioletowych linii (retro arcade classic)
         ══════════════════════════════════════════════════════ */
 
-        /* sufit — neonowe belki świetlne */
+        /* Sufit – poziomy gradient 4px imitujący rzędy neonowych rur (różowa / niebieska / złota / fioletowa).
+           box-shadow rozszerza poświatę poza pasek. */
         .room-ceiling {
             position:fixed; top:0; left:0; right:0; height:4px; z-index:0;
             background:linear-gradient(90deg,
@@ -39,7 +102,8 @@
                 0 0 18px rgba(0,180,255,.4);
         }
 
-        /* ambient z sufitu */
+        /* Ambient – gradienty radial symulujące rozlane światło neonów na ścianach bocznych i suficie.
+           pointer-events:none zapobiega blokowaniu kliknięć przez nakładkę. */
         .room-ambient {
             position:fixed; inset:0; z-index:0; pointer-events:none;
             background:
@@ -51,7 +115,11 @@
                     rgba(180,0,80,.08) 0%, transparent 55%);
         }
 
-        /* perspektywiczna siatka podłogi */
+        /* Podłoga – siatka CSS z efektem perspektywy 3D.
+           left/right:-50vw rozszerza siatkę poza ekran żeby linie były gęstsze.
+           transform: perspective(700px) rotateX(52deg) odchyla siatkę jak podłogę w salonie.
+           transform-origin:top center – obrót od górnej krawędzi (punkt zbiegu perspektywy).
+           mask-image: zanik przezroczystości na górze (linia horyzontu). */
         .room-floor {
             position:fixed; bottom:0;
             left:-50vw; right:-50vw;
@@ -66,14 +134,15 @@
             transform:perspective(700px) rotateX(52deg);
             transform-origin:top center;
 
-            /* zanik u góry siatki */
+            /* zanik u góry siatki – bez tego linie byłyby widoczne aż do horyzontu */
             -webkit-mask-image:linear-gradient(to bottom,
                 transparent 0%, rgba(0,0,0,.4) 12%, black 45%);
             mask-image:linear-gradient(to bottom,
                 transparent 0%, rgba(0,0,0,.4) 12%, black 45%);
         }
 
-        /* horyzont podłogi — świecąca linia */
+        /* Horyzont podłogi – świecąca pozioma linia na górnej krawędzi siatki (pseudo-element).
+           Imituje neonową listwę przy podłodze sali gier. */
         .room-floor::after {
             content:'';
             position:absolute; top:0; left:0; right:0; height:2px;
@@ -84,7 +153,9 @@
             box-shadow:0 0 20px rgba(150,0,255,.6), 0 0 60px rgba(100,0,200,.3);
         }
 
-        /* napisy na ścianie — ledwo widoczne */
+        /* Napisy na bocznych ścianach – prawie niewidoczne (opacity ~8%).
+           Obrót o ±90° przez rotate() + translateX() poprawia wyrównanie przy poziomym tekście
+           obróconym pionowo. Dekoracja typowa dla salonów arcade lat 80. */
         .wall-text {
             position:fixed; z-index:0;
             font-size:22px; letter-spacing:6px;
@@ -93,8 +164,13 @@
         .wall-text.left  { left:2vw;  top:38%; color:rgba(0,180,255,.08);  transform:rotate(-90deg) translateX(-50%); }
         .wall-text.right { right:2vw; top:38%; color:rgba(255,0,140,.08);  transform:rotate(90deg)  translateX(50%); }
 
-        /* ══ AUTOMAT ═════════════════════════════════════════ */
-
+        /* ══ AUTOMAT ═════════════════════════════════════════
+           Główny kontener automatu – flexbox kolumnowy, zaokrąglony u góry.
+           min() ogranicza rozmiar: na dużym ekranie max 660×960px,
+           na małym 95vw/96vh żeby nie wychodził poza ekran.
+           Wielowarstwowy box-shadow tworzy efekt 3D (boczne krawędzie ciemniejsze,
+           złota poświata u góry, głęboki cień u dołu).
+        ══════════════════════════════════════════════════════ */
         .arcade-machine {
             position:relative; z-index:1;
             display:flex; flex-direction:column; align-items:stretch;
@@ -107,18 +183,20 @@
             border:3px solid #14163a;
 
             box-shadow:
-                -7px 0 0 #04040e,
-                 7px 0 0 #04040e,
-                0 -22px 80px  rgba(255,210,0,.20),
-                0   0px 100px rgba(40,0,140,.45),
-                0  35px 100px rgba(0,0,0,.95),
-                inset 0 0 0 2px rgba(255,255,255,.025);
+                -7px 0 0 #04040e,           /* lewa krawędź boczna */
+                 7px 0 0 #04040e,            /* prawa krawędź boczna */
+                0 -22px 80px  rgba(255,210,0,.20),   /* złota poświata marquee */
+                0   0px 100px rgba(40,0,140,.45),     /* fioletowy blask ekranu */
+                0  35px 100px rgba(0,0,0,.95),        /* głęboki cień na podłodze */
+                inset 0 0 0 2px rgba(255,255,255,.025); /* subtelna wewnętrzna ramka */
 
             overflow:hidden;
         }
 
-        /* ── MARQUEE ──────────────────────────────────────── */
+        /* ── MARQUEE (tablica tytułowa) ───────────────────── */
 
+        /* Górna sekcja automatu z tytułem gry.
+           Gradient radial tworzy efekt poświaty od żarówek za tablicą. */
         .arc-marquee {
             flex-shrink:0; height:82px;
             position:relative; overflow:hidden;
@@ -129,6 +207,8 @@
             display:flex; flex-direction:column;
             align-items:center; justify-content:center; gap:0;
         }
+
+        /* Pionowe prążki na tle marquee – imitacja kratki przed żarówkami (pseudo-element). */
         .arc-marquee::before {
             content:''; position:absolute; inset:0;
             background:repeating-linear-gradient(
@@ -137,10 +217,14 @@
             pointer-events:none;
         }
 
+        /* Paski migających diod nad i pod tytułem. */
         .mq-lights { display:flex; gap:9px; z-index:1; }
         .mq-lights.top    { position:absolute; top:7px; }
         .mq-lights.bottom { position:absolute; bottom:7px; }
 
+        /* Klasy diod: y=żółta, o=pomarańczowa, r=czerwona, c=cyjanowa.
+           Klasy animacji: a=faza A (zapalona→zgaszona), b=faza B (zgaszona→zapalona).
+           Dwie przeciwne fazy tworzą efekt naprzemiennego migania. */
         .dot { width:7px; height:7px; border-radius:50%; }
         .dot.y{background:#ffe600;box-shadow:0 0 6px #ffe600,0 0 14px #ffaa00}
         .dot.o{background:#ff8800;box-shadow:0 0 6px #ff8800,0 0 14px #ff5500}
@@ -149,9 +233,13 @@
         .dot.a{animation:blinkA 1.3s ease-in-out infinite}
         .dot.b{animation:blinkB 1.3s ease-in-out infinite}
 
+        /* Dwie fazy migania – A i B są swoimi odwrotnościami:
+           gdy A ma opacity:1 to B ma opacity:.12 i odwrotnie. */
         @keyframes blinkA{0%,48%,100%{opacity:1}50%,96%{opacity:.12}}
         @keyframes blinkB{0%,48%,100%{opacity:.12}50%,96%{opacity:1}}
 
+        /* Tytuł "PAC-MAN" – wielowarstwowy text-shadow tworzy efekt neonowej poświaty:
+           biały rdzeń → żółty blask → pomarańczowy daleki blask. */
         .mq-title {
             z-index:1; font-size:58px; letter-spacing:14px; line-height:1;
             color:#ffe600;
@@ -159,20 +247,25 @@
                 0 0 4px #fff,0 0 12px #ffe600,
                 0 0 28px #ffe600,0 0 56px #ffaa00,0 0 100px #ff6600;
         }
+
+        /* Podtytuł "3D EDITION" – fioletowy neon. */
         .mq-sub {
             z-index:1; font-size:14px; letter-spacing:9px;
             color:#cc77ff;
             text-shadow:0 0 8px #aa44ff,0 0 20px #6600cc;
         }
 
-        /* ── CIAŁO ────────────────────────────────────────── */
+        /* ── CIAŁO AUTOMATU ───────────────────────────────── */
 
+        /* Środkowa sekcja: boczne panele + ekran. flex:1 wypełnia całą dostępną wysokość.
+           margin:0 8px tworzy "talię" automatu (zwężenie po bokach). */
         .arc-body {
             flex:1; min-height:0;
             display:flex;
-            margin:0 8px; /* talia */
+            margin:0 8px;
         }
 
+        /* Boczne panele z otworami wentylacyjnymi – wąskie kolumny 24px. */
         .arc-side {
             flex-shrink:0; width:24px;
             display:flex; flex-direction:column;
@@ -182,11 +275,15 @@
             border-left: 1px solid rgba(255,255,255,.03);
             border-right:1px solid rgba(255,255,255,.03);
         }
+        /* Prawy panel – odwrócony gradient (źródło światła z drugiej strony). */
         .arc-side.r {
             background:linear-gradient(90deg,#080810 0%,#0b0b1c 50%,#060610 100%);
         }
+
+        /* Pojedynczy otwór wentylacyjny – ciemny prostokąt z wewnętrznym cieniem. */
         .vent{width:12px;height:3px;border-radius:2px;background:#10101e;box-shadow:inset 0 1px 2px rgba(0,0,0,.9)}
 
+        /* Wrapper ekranu – poziomy padding 10px 0 tworzy wizualne odstępy nad/pod ekranem. */
         .arc-screen-wrap {
             flex:1; min-width:0;
             display:flex; padding:10px 0;
@@ -195,6 +292,7 @@
             border-right:2px solid #0e0e26;
         }
 
+        /* Bezel (ramka) ekranu – czarna oprawa z wewnętrznymi cieniami tworzącymi głębię. */
         .arc-bezel {
             flex:1; margin:0 9px;
             background:#020208;
@@ -206,6 +304,8 @@
                 0 0 14px rgba(0,0,50,.25);
         }
 
+        /* Kontener ekranu gry – zawiera canvas Three.js, HUD, overlay i efekt CRT.
+           filter:contrast/saturate wzmacnia kolory renderowanej sceny 3D. */
         #screen-container {
             position:relative; width:100%; height:100%;
             border-radius:4px; overflow:hidden;
@@ -216,12 +316,23 @@
             filter:contrast(1.06) saturate(1.1);
         }
 
+        /* Canvas Three.js – rozciągnięty na cały kontener.
+           position:absolute + inset:0 bez podawania szerokości/wysokości w px
+           (renderer.setSize() zarządza rozmiarem przez JS). */
         canvas {
             display:block; position:absolute; inset:0;
             width:100%; height:100%;
         }
 
-        /* CRT */
+        /* ── EFEKT CRT (monitor kineskopowy) ────────────────
+           Trzy warstwy pseudo-elementów symulują stary monitor:
+             .crt-overlay           – poziome linie skanowania (scanlines)
+             .crt-overlay::before   – winietowanie (zaciemnienie rogów)
+             .crt-overlay::after    – losowe migotanie ekranu (flicker)
+        ──────────────────────────────────────────────────── */
+
+        /* Scanlines – co 4 piksele ciemny pasek 1px (widoczny przy zoom-in).
+           z-index:50 – nad canvasem i HUD-em, ale nie blokuje kliknięć (pointer-events:none). */
         .crt-overlay {
             position:absolute; inset:0; z-index:50;
             border-radius:4px; pointer-events:none;
@@ -229,11 +340,16 @@
                 0deg,transparent 0,transparent 3px,
                 rgba(0,0,12,.09) 3px,rgba(0,0,12,.09) 4px);
         }
+
+        /* Winietowanie – gradient radial ciemnieje przy krawędziach jak zakrzywiony kineskop. */
         .crt-overlay::before {
             content:''; position:absolute; inset:0; border-radius:4px;
             background:radial-gradient(ellipse 90% 90% at 50% 50%,
                 transparent 38%,rgba(0,0,18,.52) 74%,rgba(0,0,28,.88) 100%);
         }
+
+        /* Migotanie ekranu – animacja step-end (bez przejść) zmienia opacity w losowych momentach
+           symulując niestabilność starego monitora. Bardzo subtelne (opacity ~0.83-0.91). */
         .crt-overlay::after {
             content:''; position:absolute; inset:0; border-radius:4px;
             animation:crtFlicker 14s step-end infinite;
@@ -246,6 +362,8 @@
 
         /* ── PANEL STEROWANIA ─────────────────────────────── */
 
+        /* Zewnętrzna obudowa panelu – lekko odchylona do przodu przez perspective + rotateX(-7deg),
+           imitując pochyłość panelu sterowania w prawdziwym automacie. */
         .arc-panel-outer {
             flex-shrink:0;
             margin:0 -6px;
@@ -260,6 +378,7 @@
             box-shadow:0 10px 24px rgba(0,0,0,.8),0 2px 6px rgba(0,0,0,.6);
         }
 
+        /* Wewnętrzna powierzchnia panelu – flexbox rozsuwa joystick, przyciski i głośnik. */
         .arc-panel-surface {
             background:linear-gradient(170deg,#0f0f2e 0%,#0b0b22 60%,#07071a 100%);
             border-radius:0 0 12px 12px;
@@ -267,6 +386,8 @@
             display:flex; align-items:center; justify-content:space-between;
         }
 
+        /* Joystick – trzy zagnieżdżone elementy: okrągła podstawa, trzon, kula.
+           Gradienty radial tworzą efekt oświetlenia 3D (źródło z lewego górnego rogu). */
         .joystick-base {
             width:56px; height:56px; border-radius:50%;
             background:radial-gradient(circle at 38% 28%,#1c1c38,#09091a);
@@ -287,6 +408,8 @@
             border:1px solid #3e3e6e;
         }
 
+        /* Przyciski 1P / 2P – dekoracyjne (pointer-events:none, cursor:default).
+           Wyglądają jak fizyczne guziki z cieniem imitującym grubość. */
         .panel-btns { display:flex; flex-direction:column; gap:8px; align-items:center; }
         .start-btn {
             font-family:'VT323',monospace; font-size:13px; letter-spacing:1px;
@@ -297,7 +420,7 @@
         .start-btn.p1 {
             background:radial-gradient(circle at 38% 30%,#ffe600,#aa9000);
             color:#443200;
-            box-shadow:0 4px 0 #776600,0 6px 10px rgba(0,0,0,.9);
+            box-shadow:0 4px 0 #776600,0 6px 10px rgba(0,0,0,.9); /* efekt tłoczonego przycisku */
         }
         .start-btn.p2 {
             background:radial-gradient(circle at 38% 30%,#ff4466,#aa1122);
@@ -305,14 +428,17 @@
             box-shadow:0 4px 0 #770018,0 6px 10px rgba(0,0,0,.9);
         }
 
+        /* Głośnik – siatka 4×5 małych otworów (grid CSS). Czysto dekoracyjny. */
         .panel-speaker {
             display:grid; grid-template-columns:repeat(4,6px);
             grid-template-rows:repeat(5,6px); gap:5px;
         }
+        /* Pojedynczy otwór głośnika – ciemny z wewnętrznym cieniem (wgłębienie). */
         .sp-dot { width:6px; height:6px; border-radius:50%; background:#0c0c1e; box-shadow:inset 0 1px 2px rgba(0,0,0,.9); }
 
         /* ── DRZWICZKI MONETARNE ──────────────────────────── */
 
+        /* Dolna sekcja z otworem na monety i panelem serwisowym. */
         .arc-coin-door {
             flex-shrink:0; height:44px;
             background:linear-gradient(180deg,#060616 0%,#04040e 100%);
@@ -320,38 +446,47 @@
             display:flex; align-items:center; justify-content:center; gap:36px;
         }
 
+        /* Wrapper otworu – etykieta "INSERT COIN" + szczelina. */
         .coin-slot-unit {
             display:flex; flex-direction:column; align-items:center; gap:3px;
         }
         .coin-door-label {
             font-size:11px; letter-spacing:2px; color:#1a1a36;
         }
+
+        /* Szczelina na monety – ciemny prostokąt z wewnętrznym cieniem (głęboka wnęka).
+           transition:.06s dla płynnego efektu "wchłaniania" monety. */
         #coinSlot {
             width:44px; height:5px; border-radius:3px;
             background:#030310; border:1px solid #14143a;
             box-shadow:inset 0 2px 5px rgba(0,0,0,1);
             transition:background .06s,box-shadow .06s;
         }
+        /* Stan po wpadnięciu monety – szczelina błyska na złoto (klasa dodawana przez JS). */
         #coinSlot.absorb {
             background:#ffe600;
             box-shadow:0 0 14px #ffcc00,0 0 28px #ff8800;
         }
 
+        /* Panel serwisowy – mała szara skrzynka z diodą LED (czysto dekoracyjny). */
         .service-panel {
             width:22px; height:30px; background:#040410;
             border:1px solid #101026; border-radius:2px;
             box-shadow:inset 0 1px 3px rgba(0,0,0,.8);
             display:flex; align-items:center; justify-content:center;
         }
+        /* Dioda serwisowa – zgaszona (ciemnozielona). */
         .service-led { width:5px; height:5px; border-radius:50%; background:#001400; }
 
-        /* ── NOGI ─────────────────────────────────────────── */
+        /* ── NOGI AUTOMATU ────────────────────────────────── */
 
         .arc-base {
             flex-shrink:0;
             display:flex; flex-direction:column; align-items:center;
         }
+        /* Górna część podstawy – pozioma listwa oddzielająca nogi od korpusu. */
         .base-top { width:100%; height:16px; background:linear-gradient(180deg,#050512 0%,#030310 100%); border-top:2px solid #0c0c20; }
+        /* Dwie nogi automatu rozsunięte na 90px. */
         .base-legs { display:flex; justify-content:center; gap:90px; width:100%; }
         .leg {
             width:26px; height:28px;
@@ -360,13 +495,17 @@
             border-bottom:3px solid #08081a; border-radius:0 0 4px 4px;
         }
 
-        /* ── MONETA ANIMOWANA ─────────────────────────────── */
+        /* ── ANIMACJA MONETY ──────────────────────────────── */
 
+        /* Moneta tworzona dynamicznie przez JS przy wyborze poziomu trudności.
+           position:fixed + left:cx (środek szczeliny) + transform:translateX(-50%) centruje monetę poziomo.
+           --fall to CSS custom property ustawiana przez JS na odległość do szczeliny. */
         .coin-anim {
             position:absolute; z-index:999; pointer-events:none;
             width:26px; height:26px; border-radius:50%;
             transform:translateX(-50%);
 
+            /* Gradient radial imituje metaliczny połysk monety (jaśniej w lewym górnym rogu). */
             background:radial-gradient(circle at 35% 28%,
                 #fffaaa 0%,#ffe600 22%,#cc9900 62%,#886600 100%);
             border:2px solid #ddaa00;
@@ -378,6 +517,11 @@
             animation:coinToSlot .7s cubic-bezier(.42,0,1,1) forwards;
         }
 
+        /* Animacja monety wpadającej do szczeliny:
+           0%      – moneta w pozycji startowej (nad szczęliną)
+           55%     – moneta dotarła do szczeliny (translateY(--fall)), obrócona o 400°
+           70%–88% – moneta "wchodzi" w szczelinę: scale Y maleje do 0.06 (spłaszczenie)
+           100%    – moneta znika (scale 0) */
         @keyframes coinToSlot {
             0%  { transform:translateX(-50%) rotateY(0deg)   scale(1);       opacity:1; }
             55% { transform:translateX(-50%) translateY(var(--fall)) rotateY(400deg) scale(1);        opacity:1; }
@@ -388,6 +532,8 @@
 
         /* ══ GAME UI (wewnątrz #screen-container) ═══════════ */
 
+        /* HUD (heads-up display) – wynik, czas i życia u góry ekranu.
+           pointer-events:none – nie blokuje kliknięć na canvasie pod spodem. */
         #hud {
             position:absolute; top:10px; left:0; right:0;
             display:flex; justify-content:space-between;
@@ -396,17 +542,22 @@
             text-shadow:0 0 8px #ff0,0 0 20px #ff0;
             z-index:10;
         }
+        /* Ramki boxów HUD – żółta obwódka z neonową poświatą. */
         #score-box,#lives-box,#timer-box {
             background:rgba(0,0,30,.75);
             border:2px solid #ffff00; padding:1px 9px;
             box-shadow:0 0 10px #ff08;
         }
 
+        /* Panel timerów respawnu duchów – pionowa lista w lewym górnym rogu.
+           Każdy wiersz (g-timer) pojawia się gdy duch jest martwy (.active → opacity:1). */
         #ghost-timers {
             position:absolute; top:48px; left:8px;
             display:flex; flex-direction:column; gap:5px;
             pointer-events:none; font-size:16px; z-index:10;
         }
+        /* Pojedynczy wiersz timera – domyślnie niewidoczny (opacity:0).
+           Klasa .active dodawana przez JS gdy duch jest martwy. */
         .g-timer {
             display:flex; align-items:center; gap:7px; padding:1px 9px;
             background:rgba(0,0,20,.7);
@@ -414,10 +565,13 @@
             opacity:0; transition:opacity .2s;
         }
         .g-timer.active{opacity:1}
+        /* Kolorowa kropka identyfikująca ducha (kolor ustawiany przez atrybut style w HTML). */
         .g-dot {width:11px;height:11px;border-radius:50%;display:inline-block}
         .g-name{color:#aaa;min-width:46px}
         .g-count{color:#fff;text-shadow:0 0 6px #fff;min-width:20px;text-align:right}
 
+        /* Nakładka menu (start / pauza / koniec gry) – pokrywa cały ekran półprzezroczystym ciemnym tłem.
+           JS pokazuje/ukrywa go przez classList.remove/add('hidden'). */
         #overlay {
             position:absolute; inset:0;
             display:flex; flex-direction:column;
@@ -425,6 +579,8 @@
             background:rgba(0,0,10,.84); z-index:20;
         }
 
+        /* Tytuł overlaya – animacja blink (0/1 opacity) przez step-end (brak przejścia).
+           Klasa .no-blink wyłącza miganie (używana dla napisów WYGRAŁEŚ / GAME OVER). */
         #overlay h1 {
             font-size:44px; color:#ffff00;
             text-shadow:0 0 12px #ff0,0 0 38px #ff0;
@@ -438,8 +594,12 @@
         .subtitle{font-size:19px;color:#fff;margin:3px 0;text-shadow:0 0 6px #88f}
         .hint    {font-size:13px;color:#666;margin:2px 0}
 
+        /* ── WYBÓR POZIOMU TRUDNOŚCI ──────────────────────── */
+
         #diff-select{display:flex;gap:12px;margin-top:22px}
 
+        /* Przyciski trudności – kolor (border, text-shadow, box-shadow) zależy od data-diff:
+           easy=zielony, normal=żółty, hard=czerwony. Hover wypełnia tło kolorem. */
         .diff-btn{
             padding:7px 14px;
             font-size:21px;font-family:'VT323',monospace;
@@ -453,6 +613,7 @@
         .diff-btn[data-diff="hard"]  {color:#ff4444;border-color:#ff4444;text-shadow:0 0 8px #f44;box-shadow:0 0 14px #f444}
         .diff-btn[data-diff="hard"]:hover  {background:#ff4444;color:#000;text-shadow:none;box-shadow:0 0 28px #f44}
 
+        /* Przycisk wznowienia (pauza) – żółty, pojawia się tylko w trybie PAUSED. */
         #resumeBtn{
             margin-top:20px;padding:7px 20px;font-size:23px;
             font-family:'VT323',monospace;background:#000;color:#ffff00;
@@ -461,8 +622,23 @@
         }
         #resumeBtn:hover{background:#ffff00;color:#000;text-shadow:none;box-shadow:0 0 28px #ff0}
 
+        /* Przycisk "zagraj ponownie" – zielony, pojawia się po GAME OVER i wygranej.
+           Różni się kolorem od resumeBtn by jednoznacznie sygnalizować nową grę. */
+        #playAgainBtn{
+            margin-top:20px;padding:7px 20px;font-size:23px;
+            font-family:'VT323',monospace;background:#000;color:#00ff88;
+            border:3px solid #00ff88;cursor:pointer;letter-spacing:3px;
+            text-shadow:0 0 8px #0f8;box-shadow:0 0 16px #0f86;transition:all .1s;
+        }
+        #playAgainBtn:hover{background:#00ff88;color:#000;text-shadow:none;box-shadow:0 0 28px #0f8}
+
+        /* Klasa ukrywająca – display:none z !important przebija wszystkie inne reguły. */
         .hidden{display:none!important}
 
+        /* ── FORMULARZ HIGH SCORE ─────────────────────────── */
+
+        /* Pole do wpisania nicku (max 8 znaków). text-transform:uppercase automatycznie
+           zamienia wpisywane litery na duże. caret-color dopasowuje kursor do koloru tekstu. */
         #name-entry{display:flex;flex-direction:column;align-items:center;gap:9px;margin-top:16px}
         #name-input{
             font-family:'VT323',monospace;font-size:27px;
@@ -471,6 +647,7 @@
             text-align:center;letter-spacing:6px;text-transform:uppercase;
             text-shadow:0 0 8px #ff0;caret-color:#ffff00;box-shadow:0 0 12px #ff04;
         }
+        /* Przycisk "ZAPISZ" – styl zgodny z resztą UI. */
         #name-confirm{
             padding:5px 20px;font-size:21px;font-family:'VT323',monospace;
             background:#000;color:#ffff00;border:3px solid #ffff00;
@@ -479,13 +656,16 @@
         }
         #name-confirm:hover{background:#ffff00;color:#000;text-shadow:none}
 
+        /* Tabela wyników – wyświetla top 5 wyników z localStorage. */
         #highscore-table{margin-top:10px}
         .hs-title{font-size:15px;color:#ff8800;letter-spacing:4px;text-shadow:0 0 8px #f80;text-align:center;margin-bottom:3px}
+        /* Wiersz tabeli – stałe szerokości kolumn (rank/name/score/time) dla wyrównania. */
         .hs-row  {display:flex;gap:8px;font-size:16px;padding:1px 5px;min-width:250px}
         .hs-rank {color:#555;width:20px;text-align:right}
         .hs-name {color:#ffff00;width:86px;text-shadow:0 0 4px #ff04}
         .hs-score{color:#fff;width:68px;text-align:right}
         .hs-time {color:#888;width:44px;text-align:right}
+        /* Nowy rekord – wszystkie komórki wiersza podświetlone na zielono. */
         .hs-new .hs-rank,.hs-new .hs-name,.hs-new .hs-score,.hs-new .hs-time{
             color:#00ff88!important;text-shadow:0 0 6px #0f8!important
         }
@@ -493,16 +673,27 @@
 </head>
 <body>
 
-<!-- TŁO SALONU -->
-<div class="room-ceiling"></div>
-<div class="room-ambient"></div>
-<div class="room-floor"></div>
+<!-- ══ TŁO SALONU GER ══════════════════════════════════════════
+     Trzy warstwy dekoracyjne za automatem (z-index:0).
+     Nie zawierają żadnej logiki gry – czysto wizualne.
+══════════════════════════════════════════════════════════════ -->
+<div class="room-ceiling"></div>   <!-- neonowe belki świetlne przy suficie -->
+<div class="room-ambient"></div>   <!-- rozlane odbicia neonów na ścianach -->
+<div class="room-floor"></div>     <!-- perspektywiczna siatka podłogi -->
 
-<!-- AUTOMAT -->
+<!-- ══ AUTOMAT ARCADE ══════════════════════════════════════════
+     Główna struktura wizualna: od góry do dołu:
+       1. .arc-marquee    – tablica tytułowa z diodami i tytułem gry
+       2. .arc-body       – środkowa sekcja: boczne panele + ekran 3D
+       3. .arc-panel-outer – pochylony panel sterowania (joystick, przyciski, głośnik)
+       4. .arc-coin-door  – sekcja wrzutu monety
+       5. .arc-base       – podstawa z nogami
+══════════════════════════════════════════════════════════════ -->
 <div class="arcade-machine">
 
-    <!-- MARQUEE -->
+    <!-- MARQUEE – tablica tytułowa z migającymi diodami i neonowym napisem -->
     <div class="arc-marquee">
+        <!-- Górny rząd diod: klasy y/o/r/c = kolor, a/b = faza migania (naprzemiennie) -->
         <div class="mq-lights top">
             <div class="dot y a"></div><div class="dot o b"></div>
             <div class="dot y a"></div><div class="dot r b"></div>
@@ -511,8 +702,10 @@
             <div class="dot o a"></div><div class="dot y b"></div>
             <div class="dot r a"></div><div class="dot y b"></div>
         </div>
+        <!-- &#8209; = non-breaking hyphen (łącznik nierozdzielający, by "PAC-MAN" nie łamało linii) -->
         <div class="mq-title">PAC&#8209;MAN</div>
         <div class="mq-sub">3 D &nbsp; E D I T I O N</div>
+        <!-- Dolny rząd diod – fazy odwrócone względem górnego (b zamiast a i odwrotnie) -->
         <div class="mq-lights bottom">
             <div class="dot y b"></div><div class="dot r a"></div>
             <div class="dot y b"></div><div class="dot o a"></div>
@@ -523,82 +716,120 @@
         </div>
     </div>
 
-    <!-- CIAŁO -->
+    <!-- CIAŁO – środkowa sekcja automatu: wentylacja + ekran + wentylacja -->
     <div class="arc-body">
+
+        <!-- Lewy panel boczny z otworami wentylacyjnymi (dekoracyjny) -->
         <div class="arc-side">
             <div class="vent"></div><div class="vent"></div><div class="vent"></div>
             <div class="vent"></div><div class="vent"></div><div class="vent"></div>
             <div class="vent"></div><div class="vent"></div>
         </div>
 
+        <!-- Wrapper ekranu z bezelem (czarną ramką okalającą monitor) -->
         <div class="arc-screen-wrap">
             <div class="arc-bezel">
+
+                <!-- Kontener ekranu gry – zawiera wszystkie warstwy UI -->
                 <div id="screen-container">
+
+                    <!-- Canvas Three.js – renderer WebGL rysuje tutaj scenę 3D.
+                         Rozmiar zarządzany przez JS (renderer.setSize). -->
                     <canvas></canvas>
 
+                    <!-- HUD: wynik / czas / życia – widoczny tylko podczas rozgrywki.
+                         Domyślnie ukryty (class="hidden"), pokazywany przez startGame(). -->
                     <div id="hud" class="hidden">
                         <div id="score-box">WYNIK &nbsp;<span id="score">0</span></div>
                         <div id="timer-box">CZAS &nbsp;<span id="timer">0:00</span></div>
                         <div id="lives-box">ŻYCIA &nbsp;<span id="lives">3</span></div>
                     </div>
 
+                    <!-- Timery respawnu duchów – jeden wiersz na ducha.
+                         Klasa .active (dodawana przez JS) powoduje pojawienie się wiersza
+                         gdy dany duch jest martwy i odlicza respawn. -->
                     <div id="ghost-timers" class="hidden">
+                        <!-- gt-N = wrapper wiersza, gc-N = licznik sekund do respawnu -->
                         <div class="g-timer" id="gt-0"><span class="g-dot" style="background:#f00"></span><span class="g-name">BLINKY</span><span class="g-count" id="gc-0">5</span></div>
                         <div class="g-timer" id="gt-1"><span class="g-dot" style="background:#ffb8ff"></span><span class="g-name">PINKY</span><span class="g-count" id="gc-1">5</span></div>
                         <div class="g-timer" id="gt-2"><span class="g-dot" style="background:#0ff"></span><span class="g-name">INKY</span><span class="g-count" id="gc-2">5</span></div>
                         <div class="g-timer" id="gt-3"><span class="g-dot" style="background:#ffb852"></span><span class="g-name">CLYDE</span><span class="g-count" id="gc-3">5</span></div>
                     </div>
 
+                    <!-- Overlay menu – nakładka pokazywana na ekranie startowym, podczas pauzy
+                         i po zakończeniu gry. JS zarządza widocznością poszczególnych sekcji. -->
                     <div id="overlay">
+                        <!-- Tytuł – zmienia treść i animację w zależności od stanu gry -->
                         <h1 id="overlayTitle">PACMAN 3D</h1>
+                        <!-- Podtytuł / komunikat (wynik, czas po wygranej itp.) -->
                         <p class="subtitle" id="overlayMsg">ZJEDZ WSZYSTKIE KULKI</p>
+                        <!-- Podpowiedzi sterowania – ukrywane na ekranie pauzy i końca gry -->
                         <p class="hint" id="hintControls">STRZAŁKI / WASD – RUCH &nbsp;|&nbsp; P – PAUZA</p>
                         <p class="hint" id="hintPellet">BIAŁA KULKA = DUCHY DO ZJEDZENIA PRZEZ 8 SEK</p>
 
+                        <!-- Wybór poziomu trudności – data-diff odczytywane przez JS w handlerze kliknięcia -->
                         <div id="diff-select">
                             <button class="diff-btn" data-diff="easy">ŁATWY</button>
                             <button class="diff-btn" data-diff="normal">NORMALNY</button>
                             <button class="diff-btn" data-diff="hard">TRUDNY</button>
                         </div>
 
+                        <!-- Przycisk wznowienia – widoczny tylko w trybie PAUSED -->
                         <button id="resumeBtn" class="hidden">WZNÓW</button>
 
+                        <!-- Przycisk nowej gry – widoczny po GAME OVER i po wygranej
+                             (po zapisaniu nicku w high score). Zielony dla odróżnienia od WZNÓW. -->
+                        <button id="playAgainBtn" class="hidden">ZAGRAJ PONOWNIE</button>
+
+                        <!-- Formularz wpisu do tabeli high score – pojawia się gdy gracz
+                             zdobył wynik kwalifikujący się do top 5 (obsługiwany przez localStorage). -->
                         <div id="name-entry" class="hidden">
                             <input id="name-input" type="text" maxlength="8"
                                    placeholder="NICK" spellcheck="false" autocomplete="off">
                             <button id="name-confirm">ZAPISZ</button>
                         </div>
 
+                        <!-- Tabela najlepszych wyników (top 5) z localStorage.
+                             Nowy rekord podświetlany jest na zielono przez klasę .hs-new. -->
                         <div id="highscore-table" class="hidden">
                             <p class="hs-title">★ HIGH SCORES ★</p>
-                            <div id="hs-list"></div>
+                            <div id="hs-list"></div>  <!-- zawartość generowana przez renderHS() w JS -->
                         </div>
                     </div>
 
+                    <!-- Efekt CRT – nakładka CSS imitująca stary monitor kineskopowy:
+                         scanlines (linie skanowania) + winietowanie + migotanie.
+                         z-index:50 – nad canvasem i HUD-em, pointer-events:none = nie blokuje. -->
                     <div class="crt-overlay"></div>
-                </div>
-            </div>
-        </div>
 
+                </div><!-- /#screen-container -->
+            </div><!-- /.arc-bezel -->
+        </div><!-- /.arc-screen-wrap -->
+
+        <!-- Prawy panel boczny (klasa .r odwraca gradient względem lewego) -->
         <div class="arc-side r">
             <div class="vent"></div><div class="vent"></div><div class="vent"></div>
             <div class="vent"></div><div class="vent"></div><div class="vent"></div>
             <div class="vent"></div><div class="vent"></div>
         </div>
-    </div>
 
-    <!-- PANEL STEROWANIA -->
+    </div><!-- /.arc-body -->
+
+    <!-- PANEL STEROWANIA – pochylony perspektywicznie o -7° (CSS transform w .arc-panel-outer) -->
     <div class="arc-panel-outer">
         <div class="arc-panel-surface">
+            <!-- Joystick – trzy zagnieżdżone divy: podstawa → trzon → kula (czysto dekoracyjny) -->
             <div class="joystick-base">
                 <div class="joystick-shaft">
                     <div class="joystick-ball"></div>
                 </div>
             </div>
+            <!-- Przyciski 1P/2P – dekoracyjne, nie reagują na kliknięcia (pointer-events:none) -->
             <div class="panel-btns">
                 <div class="start-btn p1">1P</div>
                 <div class="start-btn p2">2P</div>
             </div>
+            <!-- Głośnik – siatka 4×5 otworów (20 elementów sp-dot = 4 kolumny × 5 wierszy) -->
             <div class="panel-speaker">
                 <div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div>
                 <div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div><div class="sp-dot"></div>
@@ -609,18 +840,20 @@
         </div>
     </div>
 
-    <!-- DRZWICZKI MONETARNE -->
+    <!-- DRZWICZKI MONETARNE – sekcja z otworem na monety i panelem serwisowym -->
     <div class="arc-coin-door">
         <div class="coin-slot-unit">
             <div class="coin-door-label">INSERT COIN</div>
+            <!-- #coinSlot – JS dodaje klasę .absorb gdy moneta wpada (błysk złotego koloru) -->
             <div id="coinSlot"></div>
         </div>
+        <!-- Panel serwisowy z diodą – czysto dekoracyjny element typowy dla automatów arcade -->
         <div class="service-panel">
             <div class="service-led"></div>
         </div>
     </div>
 
-    <!-- NOGI -->
+    <!-- NOGI AUTOMATU – podstawa z poziomą listwą i dwiema nogami -->
     <div class="arc-base">
         <div class="base-top"></div>
         <div class="base-legs">
@@ -629,8 +862,14 @@
         </div>
     </div>
 
-</div>
+</div><!-- /.arcade-machine -->
 
+<!--
+    Import map – mapuje nazwy modułów ES na URLe CDN.
+    Dzięki temu w JS można pisać: import * as THREE from 'three'
+    zamiast pełnego adresu https://unpkg.com/...
+    Nie wymaga żadnego narzędzia budowania (Webpack/Vite).
+-->
 <script type="importmap">
 {
     "imports": {
@@ -639,6 +878,9 @@
     }
 }
 </script>
+
+<!-- Punkt wejścia gry – moduł ES, ładowany po DOM-ie (defer domyślny dla type="module"). -->
 <script type="module" src="js/main.js"></script>
+
 </body>
 </html>

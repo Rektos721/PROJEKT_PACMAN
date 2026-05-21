@@ -10,15 +10,21 @@ import {
 } from './config.js';
 import { colToX, rowToZ, isWalkable, isWalkableGhost, isGhostHouseCell } from './maze.js';
 
+// Cztery możliwe kierunki ruchu (delta kolumna, delta wiersz)
 const DIRS = [
-    { dc:  1, dr:  0 },
-    { dc: -1, dr:  0 },
-    { dc:  0, dr:  1 },
-    { dc:  0, dr: -1 },
+    { dc:  1, dr:  0 },   // prawo
+    { dc: -1, dr:  0 },   // lewo
+    { dc:  0, dr:  1 },   // dół
+    { dc:  0, dr: -1 },   // góra
 ];
 
-// Kąty obrotu Y dla każdego kierunku.
-// Pacman to dysk – usta otwierają się wzdłuż lokalnej osi +X.
+// Kąty obrotu Y dla każdego kierunku ruchu.
+// Model Pacmana i duchów "patrzy" wzdłuż lokalnej osi +X (rotation.y = 0).
+// Pozostałe kąty to obroty od tej pozycji bazowej:
+//   prawo  →   0        (brak obrotu, patrzy w +X)
+//   lewo   →   π        (obrót o 180°)
+//   góra   →   π/2      (obrót o 90° w lewo)
+//   dół    →  -π/2      (obrót o 90° w prawo)
 const DIR_ANGLE = {
     '1,0':    0,
     '-1,0':   Math.PI,
@@ -87,8 +93,19 @@ export class Pacman {
         this.group.position.set(colToX(this.col), 0.50, rowToZ(this.row));
     }
 
+    /**
+     * Ustawia żądany kierunek ruchu (buforowany – zastosowany przy najbliższym skrzyżowaniu).
+     * @param {number} dc – delta kolumny:  -1 lewo, +1 prawo, 0 bez zmiany
+     * @param {number} dr – delta wiersza: -1 góra, +1 dół,   0 bez zmiany
+     */
     setNextDirection(dc, dr) { this.nextDirection = { dc, dr }; }
 
+    /**
+     * Aktualizuje pozycję i animację Pacmana.
+     * Ruch odbywa się komórka-po-komórce z interpolacją (progress 0→1).
+     * Przy dotarciu do celu sprawdza buforowany kierunek i przesuwa się dalej.
+     * @param {number} dt – czas klatki w sekundach
+     */
     update(dt) {
         if (this.progress >= 1.0) {
             this.col = this.targetCol; this.row = this.targetRow;
@@ -126,8 +143,14 @@ export class Pacman {
         this.lowerJaw.rotation.z = -chomp;
     }
 
+    /** Zwraca pozycję docelowej komórki (używana do wykrywania kolizji i zbierania kulek). */
     getGridPos() { return { col: this.targetCol, row: this.targetRow }; }
 
+    /**
+     * Resetuje Pacmana do pozycji startowej (używane przy nowej grze i po utracie życia).
+     * @param {number} startCol – kolumna startowa
+     * @param {number} startRow – wiersz startowy
+     */
     reset(startCol, startRow) {
         this.col = startCol; this.row = startRow;
         this.targetCol = startCol; this.targetRow = startRow;
@@ -174,7 +197,11 @@ export class Ghost {
         this._buildMesh(colorHex);
     }
 
-    // Wywoływana przez main.js po wyborze trudności
+    /**
+     * Ustawia parametry prędkości i AI zależne od wybranego poziomu trudności.
+     * Wywoływana przez main.js tuż przed startGame().
+     * @param {Object} cfg – obiekt z DIFFICULTIES[key]
+     */
     configure(cfg) {
         this.speed        = cfg.ghostSpeed;
         this.scaredSpeed  = cfg.scaredSpeed;
@@ -246,6 +273,10 @@ export class Ghost {
         this.group.position.set(colToX(this.col), 0, rowToZ(this.row));
     }
 
+    /**
+     * Aktywuje tryb strachu: zmienia kolor na niebieski i ustawia odliczanie.
+     * Ignorowany gdy duch jest już martwy (respawn). Anuluje chaseTimer.
+     */
     scare() {
         if (this.dead) return;
         this.scared = true; this.scaredTimer = SCARED_DURATION;
@@ -255,6 +286,7 @@ export class Ghost {
         this.glowMat.color.setHex(GHOST_SCARED_COLOR);
     }
 
+    /** Przywraca normalny kolor ducha po wygaśnięciu power pelletu. */
     unscare() {
         this.scared = false;
         this.bodyMat.color.setHex(this.normalColor);
@@ -262,7 +294,11 @@ export class Ghost {
         this.glowMat.color.setHex(this.normalColor);
     }
 
-    // Wywołaj gdy duch zostaje zjedzony – wchodzi w cooldown
+    /**
+     * Oznacza ducha jako martwego – ukrywa go i uruchamia odliczanie respawnu.
+     * Po upłynięciu respawnTime (sekundy, zależne od trudności) duch
+     * wraca do startCol/startRow i rusza w górę ku wyjściu z bazy.
+     */
     kill() {
         this.dead         = true;
         this.scared       = false;
@@ -272,6 +308,14 @@ export class Ghost {
         this.group.visible = false;
     }
 
+    /**
+     * Aktualizuje pozycję i stan ducha każdą klatkę.
+     * Obsługuje: odliczanie respawnu, wygasanie efektu strachu,
+     * tryb pogoni (chaseTimer), ruch z interpolacją oraz animację bujania.
+     * @param {number} dt         – czas klatki w sekundach
+     * @param {number} pacmanCol  – aktualna kolumna Pacmana (do AI)
+     * @param {number} pacmanRow  – aktualny wiersz Pacmana (do AI)
+     */
     update(dt, pacmanCol, pacmanRow) {
         // --- Stan martwy: odliczaj i respawnuj ---
         if (this.dead) {
@@ -324,6 +368,18 @@ export class Ghost {
         if (DIR_ANGLE[key] !== undefined) this.group.rotation.y = DIR_ANGLE[key];
     }
 
+    /**
+     * Wybiera kierunek ruchu ducha na podstawie jego AI.
+     * Priorytety (od najwyższego):
+     *  1. Ghost house → zawsze idź ku wyjściu (wiersz 8).
+     *  2. chaseTimer > 0 → Manhattan distance ku Pacmanowi (zezwala na zawrócenie).
+     *  3. Przestraszony → losowy kierunek spośród dostępnych.
+     *  4. Normalny → Manhattan distance ku Pacmanowi, bez zawracania;
+     *     Pinky (1) i Clyde (3) losowo zbaczają w 20% przypadków.
+     * @param {number} pacmanCol – kolumna Pacmana
+     * @param {number} pacmanRow – wiersz Pacmana
+     * @returns {{ dc: number, dr: number }} wybrany kierunek
+     */
     _chooseDirection(pacmanCol, pacmanRow) {
         // W ghost house: zawsze idź prosto w górę ku wyjściu (wiersz 8).
         // Zwykłe AI (Manhattan distance) preferuje kierunek KU Pacmanowi, który jest
@@ -366,6 +422,11 @@ export class Ghost {
         });
     }
 
+    /**
+     * Resetuje ducha do pozycji startowej (nowa gra / utrata życia przez Pacmana).
+     * @param {number} startCol – kolumna startowa
+     * @param {number} startRow – wiersz startowy
+     */
     reset(startCol, startRow) {
         this.dead = false; this.respawnTimer = 0; this.chaseTimer = 0;
         this.col = startCol; this.row = startRow;
